@@ -8,14 +8,14 @@ import {
 import { useAtom, useSetAtom } from "jotai";
 import { fileAtom, pdfStateAtom, searchTextAtom } from "../store/pdf";
 import { ReactZoomPanPinchContentRef } from "react-zoom-pan-pinch";
-import { FixedSizeList } from "react-window";
+import { type ListImperativeAPI } from "react-window";
 import { useTranslation } from "./useTranslation";
 
 interface UseWebviewInterfaceProps {
   paths: React.RefObject<{ [pageNumber: number]: PathsType[] }>;
   getSearchResult: (text: string) => any[];
   scaleRef: RefObject<ReactZoomPanPinchContentRef | null>;
-  listRef: RefObject<FixedSizeList | null>;
+  listRef: RefObject<ListImperativeAPI | null>;
 }
 
 export const useWebviewInterface = ({
@@ -75,7 +75,7 @@ export const useWebviewInterface = ({
         if (!isNaN(Number(data))) {
           scaleRef.current?.resetTransform(0);
           if (listRef.current) {
-            listRef.current.scrollToItem(Number(data) - 1, "start");
+            listRef.current.scrollToRow({ index: Number(data) - 1, align: "start" });
           }
         }
       },

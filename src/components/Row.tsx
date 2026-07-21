@@ -1,6 +1,6 @@
 import { CSSProperties, useCallback } from "react";
 import { Page } from "react-pdf";
-import { areEqual, ListChildComponentProps } from "react-window";
+import { type RowComponentProps } from "react-window";
 import PlaceholderPage from "./PlaceholderPage";
 import {
   CustomTextRenderer,
@@ -15,8 +15,15 @@ const Row = typedMemo(
   ({
     index,
     style,
-    data,
-  }: ListChildComponentProps<{
+    pdfSize,
+    searchText,
+    setRef,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp,
+    canDraw,
+    onRenderSuccess,
+  }: RowComponentProps<{
     pdfSize: { width: number; height: number };
     searchText: string;
     canDraw?: boolean;
@@ -26,17 +33,6 @@ const Row = typedMemo(
     setRef: (node: HTMLCanvasElement) => void;
     onRenderSuccess: OnRenderSuccess;
   }>) => {
-    const {
-      pdfSize,
-      searchText,
-      setRef,
-      onPointerDown,
-      onPointerMove,
-      onPointerUp,
-      canDraw,
-      onRenderSuccess,
-    } = data;
-
     const textRenderer: CustomTextRenderer = useCallback(
       (textItem) => highlightPattern(textItem.str, searchText.trim()),
       [searchText]
@@ -99,8 +95,7 @@ const Row = typedMemo(
         </Page>
       </div>
     );
-  },
-  areEqual
+  }
 );
 
 export default Row;

@@ -25,7 +25,7 @@ import {
   searchTextAtom,
 } from "./store/pdf";
 import { PDFDocument } from "pdf-lib";
-import { FixedSizeList as List, ListOnScrollProps } from "react-window";
+import { List, type ListImperativeAPI } from "react-window";
 import Row from "./components/Row";
 import { useWindowSize } from "./hooks/useWIndowSIze";
 import { useTranslation } from "./hooks/useTranslation";
@@ -36,7 +36,7 @@ export default function PdfEngine() {
   const canvasRefs = useRef<HTMLCanvasElement[]>([]);
   const scaleRef = useRef<ReactZoomPanPinchContentRef>(null);
   const [currentViewingPage, setCurrentViewingPage] = useState(1);
-  const listRef = useRef<List>(null);
+  const listRef = useRef<ListImperativeAPI>(null);
   const searchText = useAtomValue(searchTextAtom);
   const file = useAtomValue(fileAtom);
   const [pdfState, setPdfState] = useAtom(pdfStateAtom);
@@ -88,7 +88,7 @@ export default function PdfEngine() {
     []
   );
   const containerHeight = useMemo(
-    () => (pdfSize.height + 10) * pdfState.totalPage,
+    () => (Math.round(pdfSize.height) + 10) * pdfState.totalPage,
     [pdfSize.height, pdfState.totalPage]
   );
   const listStyle = useMemo(
@@ -174,15 +174,16 @@ export default function PdfEngine() {
         isListOpen: false,
       }));
       scaleRef.current?.resetTransform(0);
-      listRef.current?.scrollToItem(args.pageIndex, "start");
+      listRef.current?.scrollToRow({ index: args.pageIndex, align: "start" });
     },
     [setPdfState]
   );
 
   const onScroll = useCallback(
-    (props: ListOnScrollProps) => {
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const scrollOffset = e.currentTarget.scrollTop;
       requestAnimationFrame(() => {
-        const scrollPosition = props.scrollOffset + 5;
+        const scrollPosition = scrollOffset + 5;
         const scrollRatio = scrollPosition / containerHeight;
         const currentPage = Math.min(
           Math.floor(scrollRatio * pdfState.totalPage) + 1,
@@ -251,18 +252,15 @@ export default function PdfEngine() {
           >
             <TransformComponent>
               <List
-                ref={listRef}
+                listRef={listRef}
                 onScroll={onScroll}
-                itemCount={pdfState.totalPage}
-                itemSize={pdfSize.height + 10}
-                width={windowWidth}
-                height={windowHeight}
-                itemData={itemData}
+                rowCount={pdfState.totalPage}
+                rowHeight={Math.round(pdfSize.height) + 10}
+                rowProps={itemData}
+                rowComponent={Row}
                 className="overflow-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-300 hover:scrollbar-thumb-gray-500"
-                style={listStyle}
-              >
-                {Row}
-              </List>
+                style={{ width: windowWidth, height: windowHeight, ...listStyle }}
+              />
             </TransformComponent>
           </TransformWrapper>
         </div>

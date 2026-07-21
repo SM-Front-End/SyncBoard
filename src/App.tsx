@@ -44,11 +44,11 @@ function App() {
           base64: param?.data?.isNew
             ? await createOrMergePdf()
             : param?.data?.type === "pdf"
-            ? param?.data?.base64
-            : await createPDFFromImgBase64(
-                param?.data?.base64,
-                param?.data?.type
-              ),
+              ? param?.data?.base64
+              : await createPDFFromImgBase64(
+                  param?.data?.base64,
+                  param?.data?.type,
+                ),
           paths: param?.data?.paths,
           isNew: param?.data?.isNew,
           type: param?.data?.type,
