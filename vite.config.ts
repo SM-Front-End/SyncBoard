@@ -11,6 +11,9 @@ const require = createRequire(import.meta.url);
 
 const pdfjsDistPath = path.dirname(require.resolve("pdfjs-dist/package.json"));
 const cMapsDir = normalizePath(path.join(pdfjsDistPath, "cmaps"));
+const standardFontsDir = normalizePath(
+  path.join(pdfjsDistPath, "standard_fonts")
+);
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -21,6 +24,10 @@ export default defineConfig({
       targets: [
         {
           src: cMapsDir,
+          dest: "",
+        },
+        {
+          src: standardFontsDir,
           dest: "",
         },
       ],

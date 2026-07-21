@@ -1,4 +1,5 @@
 import { atom } from "jotai";
+import { DRAWING_DPR } from "../libs/utils/common";
 
 export const fileAtom = atom({
   base64: "",
@@ -18,5 +19,5 @@ export const pdfStateAtom = atom({
 export const pdfConfigAtom = atom({
   size: { width: 0, height: 0 },
   strokeStep: 16,
-  devicePixelRatio: 2,
+  devicePixelRatio: DRAWING_DPR,
 });

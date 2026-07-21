@@ -47,6 +47,14 @@ interface Props {
   setIsWrongTouch: Dispatch<SetStateAction<boolean>>;
 }
 
+const STROKE_STEPS = [
+  { step: 28, Icon: Stroke5Step },
+  { step: 22, Icon: Stroke4Step },
+  { step: 16, Icon: Stroke3Step },
+  { step: 10, Icon: Stroke2Step },
+  { step: 4, Icon: Stroke1Step },
+];
+
 const PdfOverlay = ({
   paths,
   drawType,
@@ -224,101 +232,50 @@ const PdfOverlay = ({
                 <>
                   <ColorPicker onColorSelect={setColor} selectedColor={color} />
                   <div className="w-[1px] h-[40px] bg-[#EEEFF3] mx-[8px]" />
-                  <button
-                    onClick={() => {
-                      setPdfState((prev) => ({
-                        ...prev,
-                        isStrokeOpen: !prev.isStrokeOpen,
-                      }));
-                    }}
-                    className={clsx(
-                      "pointer-events-auto size-[44px] rounded-lg flex-center",
-                      pdfState.isStrokeOpen ? "bg-[#EEEFF3]" : "#ffffff"
-                    )}
-                  >
-                    <Stroke />
+                  <div className="relative flex-center">
+                    <button
+                      onClick={() => {
+                        setPdfState((prev) => ({
+                          ...prev,
+                          isStrokeOpen: !prev.isStrokeOpen,
+                        }));
+                      }}
+                      className={clsx(
+                        "pointer-events-auto size-[44px] rounded-lg flex-center",
+                        pdfState.isStrokeOpen ? "bg-[#EEEFF3]" : "#ffffff"
+                      )}
+                    >
+                      <Stroke />
+                    </button>
                     {pdfState.isStrokeOpen && (
-                      <div className="bg-white w-[60px] h-[236px] absolute bottom-[90px] rounded-lg shadow-black shadow-sm flex flex-col justify-center items-center">
-                        <button
-                          onClick={() => {
-                            setPdfConfig((prev) => ({
-                              ...prev,
-                              strokeStep: 28,
-                            }));
-                          }}
-                          className={
-                            "pointer-events-auto size-[44px] flex-center"
-                          }
-                        >
-                          <Stroke5Step
-                            color={
-                              pdfConfig.strokeStep === 28 ? color : "#BCC2CB"
-                            }
-                          />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setPdfConfig((prev) => ({
-                              ...prev,
-                              strokeStep: 22,
-                            }));
-                          }}
-                          className="pointer-events-auto size-[44px] flex-center"
-                        >
-                          <Stroke4Step
-                            color={
-                              pdfConfig.strokeStep === 22 ? color : "#BCC2CB"
-                            }
-                          />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setPdfConfig((prev) => ({
-                              ...prev,
-                              strokeStep: 16,
-                            }));
-                          }}
-                          className="pointer-events-auto size-[44px] flex-center"
-                        >
-                          <Stroke3Step
-                            color={
-                              pdfConfig.strokeStep === 16 ? color : "#BCC2CB"
-                            }
-                          />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setPdfConfig((prev) => ({
-                              ...prev,
-                              strokeStep: 10,
-                            }));
-                          }}
-                          className="pointer-events-auto size-[44px] flex-center"
-                        >
-                          <Stroke2Step
-                            color={
-                              pdfConfig.strokeStep === 10 ? color : "#BCC2CB"
-                            }
-                          />
-                        </button>
-                        <button
-                          onClick={() => {
-                            setPdfConfig((prev) => ({
-                              ...prev,
-                              strokeStep: 4,
-                            }));
-                          }}
-                          className="pointer-events-auto size-[44px] flex-center"
-                        >
-                          <Stroke1Step
-                            color={
-                              pdfConfig.strokeStep === 4 ? color : "#BCC2CB"
-                            }
-                          />
-                        </button>
+                      <div className="bg-white w-[60px] h-[236px] absolute bottom-[64px] left-1/2 -translate-x-1/2 rounded-lg shadow-black shadow-sm flex flex-col justify-center items-center">
+                        {STROKE_STEPS.map(({ step, Icon }) => (
+                          <button
+                            key={step}
+                            onClick={() => {
+                              setPdfConfig((prev) => ({
+                                ...prev,
+                                strokeStep: step,
+                              }));
+                              setPdfState((prev) => ({
+                                ...prev,
+                                isStrokeOpen: false,
+                              }));
+                            }}
+                            className="pointer-events-auto size-[44px] flex-center"
+                          >
+                            <Icon
+                              color={
+                                pdfConfig.strokeStep === step
+                                  ? color
+                                  : "#BCC2CB"
+                              }
+                            />
+                          </button>
+                        ))}
                       </div>
                     )}
-                  </button>
+                  </div>
                 </>
               ) : (
                 <button

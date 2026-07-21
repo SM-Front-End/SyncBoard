@@ -86,6 +86,7 @@ export default function PdfEngine() {
   const pdfOptions = useMemo(
     () => ({
       cMapUrl: "/cmaps/",
+      standardFontDataUrl: "/standard_fonts/",
     }),
     [],
   );

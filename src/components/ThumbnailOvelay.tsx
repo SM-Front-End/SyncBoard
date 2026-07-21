@@ -5,7 +5,7 @@ import { useAtom } from "jotai";
 import { pdfStateAtom } from "../store/pdf";
 import { OnItemClickArgs, PathsType } from "../libs/types/common";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { reDrawPathGroup } from "../libs/utils/common";
+import { forEachPathGroup, reDrawPathGroup } from "../libs/utils/common";
 import PlaceholderPage from "./PlaceholderPage";
 
 const ThumbnailOvelay = ({
@@ -41,78 +41,21 @@ const ThumbnailOvelay = ({
 
   const redrawPaths = useCallback(
     (pageNumber: number) => {
-      if (
-        !thumbnailCanvasRefs.current[pageNumber] ||
-        paths[pageNumber].length === 0
-      ) {
-        return;
-      }
-      thumbnailCanvasRefs.current[pageNumber].width = 180 * 2;
-      thumbnailCanvasRefs.current[pageNumber].height = thumbnailHeight * 2;
+      const canvas = thumbnailCanvasRefs.current[pageNumber];
+      if (!canvas) return;
+
+      // 전체 삭제 후 잔상이 남지 않도록, 필기가 없어도 항상 캔버스를 초기화
+      canvas.width = 180 * 2;
+      canvas.height = thumbnailHeight * 2;
+
       const points = paths[pageNumber];
-      if (!points || points.length === 0) return;
-      const context = thumbnailCanvasRefs.current[pageNumber].getContext("2d")!;
-      context.clearRect(
-        0,
-        0,
-        thumbnailCanvasRefs.current[pageNumber].width,
-        thumbnailCanvasRefs.current[pageNumber].height
-      );
-      let currentGroup: PathsType[] = [];
+      if (!points || points.length <= 1) return;
+      const context = canvas.getContext("2d")!;
 
-      if (points.length === 1) return;
-
-      let currentStyle = {
-        color: points[1].color,
-        lineWidth: points[1].lineWidth,
-        alpha: points[1].alpha,
-      };
-
-      for (let i = 1; i < points.length; i++) {
-        // 선이 이어진 경우
-        if (
-          points[i].lastX === points[i - 1].x &&
-          points[i].lastY === points[i - 1].y
-        ) {
-          if (i === 1) currentGroup.push(points[0]);
-          currentGroup.push(points[i]);
-          continue;
-        }
-
-        // 선이 띄워진 경우
-        if (currentGroup.length) {
-          context.beginPath();
-
-          // 현재 그룹이 2개 이상의 점을 포함하면 선 그리기
-          reDrawPathGroup(
-            context,
-            currentGroup,
-            currentStyle,
-            180,
-            thumbnailHeight
-          );
-        }
-
-        // 단일 점 처리
-        currentGroup = [points[i]]; // 새로운 그룹 초기화
-        currentStyle = {
-          color: points[i].color,
-          lineWidth: points[i].lineWidth,
-          alpha: points[i].alpha,
-        };
-      }
-      // 마지막 그룹 처리
-      if (currentGroup.length) {
+      forEachPathGroup(points, (group, style) => {
         context.beginPath();
-
-        reDrawPathGroup(
-          context,
-          currentGroup,
-          currentStyle,
-          180,
-          thumbnailHeight
-        );
-      }
+        reDrawPathGroup(context, group, style, 180, thumbnailHeight);
+      });
     },
     [thumbnailHeight, paths]
   );

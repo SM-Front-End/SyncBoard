@@ -1,27 +1,14 @@
-/* eslint-disable @typescript-eslint/ban-ts-comment */
 import { LineCapStyle, PageSizes, PDFDocument, PDFPage, rgb } from "pdf-lib";
-import { canvasEventType, PageSize, PathsType } from "../types/common";
+import { canvasEventType, PathsType } from "../types/common";
 import { isTablet } from "react-device-detect";
-import { pdfjs } from "react-pdf";
 import UTIF from "utif";
 import { RefObject } from "react";
 
 export const __DEV__ = import.meta.env.MODE === "development";
 
-export const nativeLog = (...args: unknown[]) => {
-  const logValue = args.map((arg) =>
-    Array.isArray(arg)
-      ? JSON.stringify(arg.map((item) => JSON.stringify(item)))
-      : JSON.stringify(arg)
-  );
-  //@ts-ignore
-  window.ReactNativeWebView?.postMessage(
-    JSON.stringify({
-      type: "log",
-      value: JSON.stringify(logValue),
-    })
-  );
-};
+// 필기 좌표계가 가정하는 고정 픽셀 배율. pdfConfigAtom.devicePixelRatio 및
+// 캔버스 2배 렌더링과 항상 같은 값이어야 저장된 PDF 좌표가 어긋나지 않는다.
+export const DRAWING_DPR = 2;
 
 export const colorMap = [
   "#202325",
@@ -111,24 +98,6 @@ export const drawLine = (
   context.stroke();
 };
 
-export const reDrawSinglePoint = (
-  context: CanvasRenderingContext2D,
-  point: PathsType,
-  pageWidth: number,
-  pageHeight: number
-) => {
-  const x = point.x * pageWidth;
-  const y = point.y * pageHeight;
-  context.globalAlpha = point.alpha;
-  context.strokeStyle = point.color;
-  context.lineWidth = point.lineWidth * pageWidth;
-  context.lineCap = point.alpha === 1 ? "round" : "round";
-
-  context.moveTo(x, y);
-  context.lineTo(x, y);
-  context.stroke();
-};
-
 export const reDrawPathGroup = (
   context: CanvasRenderingContext2D,
   group: PathsType[],
@@ -136,29 +105,12 @@ export const reDrawPathGroup = (
   pageWidth: number,
   pageHeight: number
 ) => {
-  // 현재 컨텍스트 상태 저장
+  context.save();
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.strokeStyle = "#F34A47";
-  context.lineWidth = 16;
-  context.save();
-  // 스타일 일괄 설정
-  const currentStyle = {
-    globalAlpha: style.alpha,
-    strokeStyle: style.color,
-    lineWidth: style.lineWidth * pageWidth,
-  };
-
-  // 이전 스타일과 비교하여 변경된 경우만 업데이트
-  if (context.globalAlpha !== currentStyle.globalAlpha) {
-    context.globalAlpha = currentStyle.globalAlpha;
-  }
-  if (context.strokeStyle !== currentStyle.strokeStyle) {
-    context.strokeStyle = currentStyle.strokeStyle;
-  }
-  if (context.lineWidth !== currentStyle.lineWidth) {
-    context.lineWidth = currentStyle.lineWidth;
-  }
+  context.globalAlpha = style.alpha;
+  context.strokeStyle = style.color;
+  context.lineWidth = style.lineWidth * pageWidth;
 
   // 패스 그리기
   context.moveTo(group[0].x * pageWidth, group[0].y * pageHeight);
@@ -175,8 +127,6 @@ export const colorToRGB = (color: (typeof colorMap)[number]) => {
   return colors[color as keyof typeof colors];
 };
 
-export const isEmptyObject = (obj: object) => Object.keys(obj).length === 0;
-
 export const escapeRegExp = (text: string) =>
   text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -192,15 +142,6 @@ export const highlightPattern = (text: string, pattern: string) => {
   );
 };
 
-export const removePathByPageNumber = (
-  paths: RefObject<{ [pageNumber: number]: PathsType[] }>,
-  pageNumber: number
-) => {
-  if (paths.current[pageNumber]) {
-    paths.current[pageNumber] = [];
-  }
-};
-
 export const removeAllPath = (
   paths: RefObject<{ [pageNumber: number]: PathsType[] }>
 ) => {
@@ -209,6 +150,72 @@ export const removeAllPath = (
       paths.current[key] = [];
     }
   }
+};
+
+// 이어진 선분(이전 점의 좌표가 lastX/lastY와 일치)끼리 그룹으로 묶어
+// 그룹 단위로 콜백을 실행한다. 캔버스 재그리기·썸네일·PDF 저장이 공유하는 로직.
+export const forEachPathGroup = (
+  points: PathsType[] | undefined,
+  callback: (
+    group: PathsType[],
+    style: { color: string; lineWidth: number; alpha: number }
+  ) => void
+) => {
+  if (!points || points.length <= 1) return;
+
+  let currentGroup: PathsType[] = [];
+  let currentStyle = {
+    color: points[1].color,
+    lineWidth: points[1].lineWidth,
+    alpha: points[1].alpha,
+  };
+
+  for (let i = 1; i < points.length; i++) {
+    // 선이 이어진 경우
+    if (
+      points[i].lastX === points[i - 1].x &&
+      points[i].lastY === points[i - 1].y
+    ) {
+      if (i === 1) currentGroup.push(points[0]);
+      currentGroup.push(points[i]);
+      continue;
+    }
+
+    // 선이 띄워진 경우: 지금까지의 그룹을 처리하고 새 그룹 시작
+    if (currentGroup.length) {
+      callback(currentGroup, currentStyle);
+    }
+    currentGroup = [points[i]];
+    currentStyle = {
+      color: points[i].color,
+      lineWidth: points[i].lineWidth,
+      alpha: points[i].alpha,
+    };
+  }
+
+  // 마지막 그룹 처리
+  if (currentGroup.length) {
+    callback(currentGroup, currentStyle);
+  }
+};
+
+// 점 (px, py)와 선분 (x1,y1)-(x2,y2) 사이의 최단 거리
+export const distancePointToSegment = (
+  px: number,
+  py: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number
+) => {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lengthSq = dx * dx + dy * dy;
+  const t =
+    lengthSq === 0
+      ? 0
+      : Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lengthSq));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 };
 
 export const getModifiedPDFBase64 = async (
@@ -225,49 +232,9 @@ export const getModifiedPDFBase64 = async (
     const page = pdfDoc.getPage(i);
     const { width: pageWidth, height: pageHeight } = page.getSize();
 
-    if (!points || points.length <= 1) continue;
-    let currentGroup: PathsType[] = [];
-    let currentStyle = {
-      color: points[1].color,
-      lineWidth: points[1].lineWidth,
-      alpha: points[1].alpha,
-    };
-
-    for (let i = 1; i < points.length; i++) {
-      // 선이 이어진 경우
-      if (
-        points[i].lastX === points[i - 1].x &&
-        points[i].lastY === points[i - 1].y
-      ) {
-        if (i === 1) currentGroup.push(points[0]);
-        currentGroup.push(points[i]);
-        continue;
-      }
-
-      // 선이 띄워진 경우
-      if (currentGroup.length) {
-        drawPDFPathGroup(
-          page,
-          currentGroup,
-          currentStyle,
-          pageWidth,
-          pageHeight
-        );
-      }
-
-      // 새로운 그룹 시작
-      currentGroup = [points[i]];
-      currentStyle = {
-        color: points[i].color,
-        lineWidth: points[i].lineWidth,
-        alpha: points[i].alpha,
-      };
-    }
-
-    // 마지막 그룹 처리
-    if (currentGroup.length) {
-      drawPDFPathGroup(page, currentGroup, currentStyle, pageWidth, pageHeight);
-    }
+    forEachPathGroup(points, (group, style) => {
+      drawPDFPathGroup(page, group, style, pageWidth, pageHeight);
+    });
   }
 
   if (!isTablet || __DEV__) {
@@ -292,21 +259,23 @@ const drawPDFPathGroup = (
   pageWidth: number,
   pageHeight: number
 ) => {
+  // 필기 좌표는 DRAWING_DPR 배율 기준으로 정규화되어 있으므로, 기기의
+  // window.devicePixelRatio가 아니라 항상 같은 고정 배율로 되돌려야 한다.
   if (style.alpha !== 1) {
     // 첫 점의 좌표로 시작 (y좌표는 pageHeight에서 빼서 뒤집기)
-    let pathData = `M ${(group[0].x * pageWidth) / devicePixelRatio},${
-      (group[0].y * pageHeight) / devicePixelRatio
+    let pathData = `M ${(group[0].x * pageWidth) / DRAWING_DPR},${
+      (group[0].y * pageHeight) / DRAWING_DPR
     }`;
 
     // 나머지 점들을 L 명령어로 연결
     for (let i = 1; i < group.length; i++) {
-      pathData += ` L ${(group[i].x * pageWidth) / devicePixelRatio},${
-        (group[i].y * pageHeight) / devicePixelRatio
+      pathData += ` L ${(group[i].x * pageWidth) / DRAWING_DPR},${
+        (group[i].y * pageHeight) / DRAWING_DPR
       }`;
     }
     page.drawSvgPath(pathData, {
       borderColor: colorToRGB(style.color as (typeof colorMap)[number]),
-      borderWidth: (style.lineWidth * pageWidth) / devicePixelRatio,
+      borderWidth: (style.lineWidth * pageWidth) / DRAWING_DPR,
       borderOpacity: style.alpha,
       borderLineCap: LineCapStyle.Round,
       x: 0,
@@ -316,204 +285,19 @@ const drawPDFPathGroup = (
     for (let i = 1; i < group.length; i++) {
       page.drawLine({
         start: {
-          x: (group[i - 1].x * pageWidth) / devicePixelRatio,
-          y: pageHeight - (group[i - 1].y * pageHeight) / devicePixelRatio,
+          x: (group[i - 1].x * pageWidth) / DRAWING_DPR,
+          y: pageHeight - (group[i - 1].y * pageHeight) / DRAWING_DPR,
         },
         end: {
-          x: (group[i].x * pageWidth) / devicePixelRatio,
-          y: pageHeight - (group[i].y * pageHeight) / devicePixelRatio,
+          x: (group[i].x * pageWidth) / DRAWING_DPR,
+          y: pageHeight - (group[i].y * pageHeight) / DRAWING_DPR,
         },
         color: colorToRGB(style.color as (typeof colorMap)[number]),
-        thickness: (style.lineWidth * pageWidth) / devicePixelRatio,
+        thickness: (style.lineWidth * pageWidth) / DRAWING_DPR,
         lineCap: style.alpha === 1 ? LineCapStyle.Round : LineCapStyle.Butt,
         opacity: style.alpha,
       });
     }
-  }
-};
-
-// export const getModifiedPDFBase64 = async (
-//   paths: {
-//     [pageNumber: number]: PathsType[];
-//   },
-//   base64Data: string
-// ) => {
-//   // 기존 PDF 로드
-//   const existingPdfBytes = base64Data;
-//   const pdfDoc = await PDFDocument.load(existingPdfBytes);
-//   for (let i = 0; i < pdfDoc.getPageCount(); i++) {
-//     const currentPaths = paths[i + 1]; // 현재 페이지의 경로 가져오기
-//     if (currentPaths) {
-//       const page = pdfDoc.getPage(i);
-//       const { width: pageWidth, height: pageHeight } = page.getSize();
-
-//       // 기존 주석 배열 먼저 가져오기
-//       // const existingAnnots = page.node.get(PDFName.of("Annots"));
-//       // const annotations: PDFDict[] = [];
-
-//       // currentPaths.forEach((path) => {
-//       //   const lineWidth = (path.lineWidth * pageWidth) / devicePixelRatio; // 정수값으로 변환
-//       //   // InkAnnotation 생성
-//       //   const annotation: PDFDict = pdfDoc.context.obj({
-//       //     Type: PDFName.of("Annot"),
-//       //     Subtype: PDFName.of("Ink"),
-//       //     F: 4, // 주석 플래그 (표시 필수)
-//       //     Rect: [
-//       //       (path.lastX * pageWidth) / devicePixelRatio,
-//       //       pageHeight - (path.lastY * pageHeight) / devicePixelRatio,
-//       //       (path.x * pageWidth) / devicePixelRatio,
-//       //       pageHeight - (path.y * pageHeight) / devicePixelRatio,
-//       //     ],
-//       //     InkList: [
-//       //       pdfDoc.context.obj([
-//       //         (path.lastX * pageWidth) / devicePixelRatio,
-//       //         pageHeight - (path.lastY * pageHeight) / devicePixelRatio,
-//       //         (path.x * pageWidth) / devicePixelRatio,
-//       //         pageHeight - (path.y * pageHeight) / devicePixelRatio,
-//       //       ]),
-//       //     ],
-//       //     C: [
-//       //       parseInt(path.color.slice(1, 3), 16) / 255,
-//       //       parseInt(path.color.slice(3, 5), 16) / 255,
-//       //       parseInt(path.color.slice(5, 7), 16) / 255,
-//       //     ],
-//       //     Border: [0, 0, lineWidth],
-//       //     BS: {
-//       //       // Border Style Dictionary 추가
-//       //       Type: PDFName.of("Border"),
-//       //       W: lineWidth, // 선 굵기
-//       //       S: PDFName.of("S"), // Solid 스타일
-//       //       LC: 1, // Line Cap Style: 1 = Round (0 = Butt, 2 = Square)
-//       //     },
-//       //     LE: [PDFName.of("Round"), PDFName.of("Round")], // Line Ending Styles
-//       //     Opacity: path.alpha,
-//       //     Contents: PDFString.of(
-//       //       JSON.stringify({ drawOrder: path.drawOrder + 1000 })
-//       //     ),
-//       //     T: "Ink Annotation", // 주석 제목
-//       //     CreationDate: new Date().toISOString(),
-//       //     M: new Date().toISOString(), // 수정 날짜
-//       //   });
-
-//       //   annotations.push(annotation);
-//       // });
-
-//       // // 한 번에 모든 주석 추가
-//       // if (existingAnnots instanceof PDFArray) {
-//       //   const annotationsArray = pdfDoc.context.obj([
-//       //     ...existingAnnots.array,
-//       //     ...annotations,
-//       //   ]);
-//       //   page.node.set(PDFName.of("Annots"), annotationsArray);
-//       // } else {
-//       //   page.node.set(PDFName.of("Annots"), pdfDoc.context.obj(annotations));
-//       // }
-
-//       //경로 그리기
-//       currentPaths.forEach(
-//         ({ x, y, lastX, lastY, color, lineWidth, alpha }) => {
-//           page.drawLine({
-//             start: {
-//               x: (lastX * pageWidth) / devicePixelRatio,
-//               y: pageHeight - (lastY * pageHeight) / devicePixelRatio,
-//             }, // y 좌표 반전
-//             end: {
-//               x: (x * pageWidth) / devicePixelRatio,
-//               y: pageHeight - (y * pageHeight) / devicePixelRatio,
-//             }, // y 좌표 반전
-//             color: colorToRGB(color), // 선 색상
-//             thickness: (lineWidth * pageWidth) / devicePixelRatio, // 선 두께
-//             lineCap: alpha === 1 ? LineCapStyle.Round : LineCapStyle.Butt,
-//             opacity: alpha,
-//           });
-//         }
-//       );
-//     }
-//   }
-//   if (!isMobile || __DEV__) {
-//     const pdfBytes = await pdfDoc.save();
-//     const blob = new Blob([pdfBytes], { type: "application/pdf" });
-//     const url = URL.createObjectURL(blob);
-//     const link = document.createElement("a");
-//     link.href = url;
-//     link.setAttribute("download", "modified.pdf");
-//     document.body.appendChild(link);
-//     link.click();
-//     document.body.removeChild(link);
-//   }
-//   const base64DataUri = await pdfDoc.saveAsBase64();
-//   return base64DataUri;
-// };
-
-export const convertAnnotationsToPaths = async (
-  pdfBase64: string,
-  pageSize: PageSize
-) => {
-  try {
-    // annotation 데이터 가져오기
-    const pdfData = atob(pdfBase64);
-    const pdfBytes = new Uint8Array(pdfData.length);
-    for (let i = 0; i < pdfData.length; i++) {
-      pdfBytes[i] = pdfData.charCodeAt(i);
-    }
-
-    const loadingTask = pdfjs.getDocument({ data: pdfBytes });
-    const pdf = await loadingTask.promise;
-    const totalPages = pdf.numPages;
-
-    // 모든 페이지의 paths를 저장할 객체
-    const allPaths: { [pageNumber: number]: PathsType[] } = {};
-
-    // 각 페이지별로 annotation 변환
-    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
-      const page = await pdf.getPage(pageNum);
-      const annotations = await page.getAnnotations();
-      const convertedPaths: PathsType[] = [];
-      annotations.forEach((annotation: any) => {
-        if (annotation.subtype === "Ink") {
-          const inkList = annotation.inkLists || [];
-
-          inkList.forEach((points: number[]) => {
-            for (let i = 0; i < points.length - 2; i += 2) {
-              const path: PathsType = {
-                lastX: (points[i] / pageSize.width) * devicePixelRatio,
-                lastY:
-                  ((pageSize.height - points[i + 1]) / pageSize.height) *
-                  devicePixelRatio,
-                x: (points[i + 2] / pageSize.width) * devicePixelRatio,
-                y:
-                  ((pageSize.height - points[i + 3]) / pageSize.height) *
-                  devicePixelRatio,
-                lineWidth:
-                  ((annotation.borderStyle?.width || 1) / pageSize.width) *
-                  devicePixelRatio,
-                color: `#${annotation.color
-                  ?.map((c: number) =>
-                    Math.round(c * 255)
-                      .toString(16)
-                      .padStart(2, "0")
-                  )
-                  .join("")}` as (typeof colorMap)[number],
-                drawOrder: JSON.parse(annotation.contentsObj.str).drawOrder,
-                alpha: annotation.opacity || 1,
-              };
-
-              convertedPaths.push(path);
-            }
-          });
-        }
-      });
-
-      // 현재 페이지의 paths 저장
-      if (convertedPaths.length > 0) {
-        allPaths[pageNum] = convertedPaths;
-      }
-    }
-
-    // paths 객체 업데이트
-    return allPaths;
-  } catch (error) {
-    console.error("Error converting annotations:", error);
   }
 };
 
@@ -543,90 +327,6 @@ export async function base64ToPdf(base64String: string) {
 export async function pdfToBase64(pdfDoc: PDFDocument) {
   return pdfDoc.saveAsBase64();
 }
-
-// export async function removeAnnots() {
-//   const uint8Array = fs.readFileSync(importFilename);
-//   const pdfDoc = await PDFDocument.load(uint8Array);
-//   const pages = pdfDoc.getPages();
-
-//   pages.forEach((page) => {
-//     const annots = page.node.Annots();
-//     const size = annots?.size();
-//     if (size) {
-//       for (let i = 0; i < size; i++) {
-//         annots.context.delete(annots.get(i));
-//       }
-//     }
-//   });
-
-//   const pdfBytes = await pdfDoc.save();
-//   fs.writeFileSync(exportFilename, pdfBytes);
-// }
-
-// export async function loadPDFAnnotations(base64Data: string) {
-//   try {
-//     // base64 데이터에서 PDF 문서 로드
-//     const pdfDoc = await PDFDocument.load(base64Data);
-
-//     // 페이지별 주석 데이터 저장할 배열
-//     const annotationsData = [];
-
-//     // 각 페이지의 주석 데이터 추출
-//     for (let i = 0; i < pdfDoc.getPageCount(); i++) {
-//       const page = pdfDoc.getPage(i);
-//       const annotationsRef = page.node.get("Annots");
-//       if (!annotationsRef) {
-//         annotationsData.push([]); // 주석이 없는 페이지는 빈 배열 추가
-//         continue;
-//       }
-
-//       const annotations =
-//         annotationsRef instanceof PDFArray ? annotationsRef : null;
-
-//       if (annotations) {
-//         const annotArray = [];
-
-//         for (const annot of annotations.asArray()) {
-//           if (!annot) continue;
-
-//           const annotDict = annot.dict;
-
-//           const annotObj = {
-//             type: annotDict?.get(PDFName.of("Subtype"))?.toString(),
-//             color: annotDict
-//               ?.get(PDFName.of("C"))
-//               ?.asArray()
-//               ?.map((c: any) => c.asNumber()),
-//             coordinates: annotDict
-//               ?.get(PDFName.of("InkList"))
-//               ?.asArray()
-//               ?.map((coord: any) =>
-//                 coord.asArray().map((num: any) => num.asNumber())
-//               ),
-//             borderWidth: annotDict
-//               ?.get(PDFName.of("Border"))
-//               ?.asArray()?.[0]
-//               ?.asNumber(),
-//             opacity: annotDict?.get(PDFName.of("Opacity"))?.asNumber(),
-//           };
-
-//           if (annotObj.type) {
-//             annotArray.push(annotObj);
-//           }
-//         }
-
-//         annotationsData.push(annotArray);
-//       } else {
-//         annotationsData.push([]); // 주석이 없는 페이지는 빈 배열 추가
-//       }
-//     }
-
-//     return annotationsData;
-//   } catch (error) {
-//     console.error("PDF 주석 로드 중 오류 발생:", error);
-//     throw error;
-//   }
-// }
 
 export async function createPDFFromImgBase64(
   base64Image: string,

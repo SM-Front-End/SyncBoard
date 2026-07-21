@@ -1,8 +1,10 @@
 import { RefObject, useCallback, useMemo, useRef, useState } from "react";
 import {
   colorMap,
+  distancePointToSegment,
   drawDashedLine,
   drawLine,
+  forEachPathGroup,
   getDrawingPosition,
   reDrawPathGroup,
 } from "../libs/utils/common";
@@ -92,68 +94,16 @@ export default function useCanvas({
   const redrawPaths = useCallback(
     (pageWidth: number, pageHeight: number, currentPage: number) => {
       if (!canvasRefs.current.length) return;
+      const canvas = canvasRefs.current[currentPage];
       const points = paths.current[currentPage];
-      if (!points || points.length === 0) return;
-      const context = canvasRefs.current[currentPage].getContext("2d")!;
-      context.clearRect(
-        0,
-        0,
-        canvasRefs.current[currentPage].width,
-        canvasRefs.current[currentPage].height
-      );
-      let currentGroup: PathsType[] = [];
-      if (points.length === 1) return;
+      if (!canvas || !points || points.length === 0) return;
+      const context = canvas.getContext("2d")!;
+      context.clearRect(0, 0, canvas.width, canvas.height);
 
-      let currentStyle = {
-        color: points[1].color,
-        lineWidth: points[1].lineWidth,
-        alpha: points[1].alpha,
-      };
-      for (let i = 1; i < points.length; i++) {
-        // 선이 이어진 경우
-        if (
-          points[i].lastX === points[i - 1].x &&
-          points[i].lastY === points[i - 1].y
-        ) {
-          if (i === 1) currentGroup.push(points[0]);
-          currentGroup.push(points[i]);
-          continue;
-        }
-
-        // 선이 띄워진 경우
-        if (currentGroup.length) {
-          context.beginPath();
-
-          // 현재 그룹이 2개 이상의 점을 포함하면 선 그리기
-          reDrawPathGroup(
-            context,
-            currentGroup,
-            currentStyle,
-            pageWidth,
-            pageHeight
-          );
-        }
-
-        // 단일 점 처리
-        currentGroup = [points[i]]; // 새로운 그룹 초기화
-        currentStyle = {
-          color: points[i].color,
-          lineWidth: points[i].lineWidth,
-          alpha: points[i].alpha,
-        };
-      }
-      // 마지막 그룹 처리
-      if (currentGroup.length) {
+      forEachPathGroup(points, (group, style) => {
         context.beginPath();
-
-        reDrawPathGroup(
-          context,
-          currentGroup,
-          currentStyle,
-          pageWidth,
-          pageHeight
-        );
-      }
+        reDrawPathGroup(context, group, style, pageWidth, pageHeight);
+      });
     },
     [canvasRefs]
   );
@@ -243,45 +193,27 @@ export default function useCanvas({
       const currentPaths = paths.current[currentPage.current] || [];
       const erasePaths = erasePathsRef.current;
 
-      // 지우기 모드에서 겹치는 drawOrder를 찾기
+      // 지우기 경로와 겹치는 획의 drawOrder 수집
       const drawOrdersToDelete = new Set();
 
-      // 모든 erasePath에 대해 반복
       erasePaths.forEach((erasePath) => {
         const eraseX = erasePath.x * pageSize.width;
         const eraseY = erasePath.y * pageSize.height;
 
-        // currentPaths를 반복하여 겹치는 경로를 찾기
         currentPaths.forEach((path) => {
-          const distance = Math.hypot(
-            path.x * pageSize.width - eraseX,
-            path.y * pageSize.height - eraseY
+          // 이미 삭제 대상인 획은 다시 계산하지 않음
+          if (drawOrdersToDelete.has(path.drawOrder)) return;
+
+          const distance = distancePointToSegment(
+            eraseX,
+            eraseY,
+            path.x * pageSize.width,
+            path.y * pageSize.height,
+            path.lastX * pageSize.width,
+            path.lastY * pageSize.height
           );
-          // 겹치는 경로가 있으면 drawOrder를 추가
           if (distance <= strokeStep) {
             drawOrdersToDelete.add(path.drawOrder);
-          }
-
-          // 선이 지나간 경우도 처리
-          const pathLength = Math.hypot(
-            path.lastX * pageSize.width - path.x * pageSize.width,
-            path.lastY * pageSize.height - path.y * pageSize.height
-          );
-
-          // 선의 중간 점들에 대해 거리 체크
-          for (let i = 0; i <= pathLength; i += 1) {
-            const t = i / pathLength;
-            const midX =
-              (1 - t) * (path.x * pageSize.width) +
-              t * (path.lastX * pageSize.width);
-            const midY =
-              (1 - t) * (path.y * pageSize.height) +
-              t * (path.lastY * pageSize.height);
-            const midDistance = Math.hypot(midX - eraseX, midY - eraseY);
-            if (midDistance <= strokeStep) {
-              drawOrdersToDelete.add(path.drawOrder);
-              break; // 한 번이라도 겹치면 더 이상 체크할 필요 없음
-            }
           }
         });
       });

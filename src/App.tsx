@@ -69,6 +69,7 @@ function App() {
         if (attemptsRef.current === 3) {
           clearInterval(checkLoading);
           alert(t("alert_max_set_data"));
+          return;
         }
         if (window.AndroidInterface && window.AndroidInterface.setPdfData) {
           window.AndroidInterface.setPdfData(true);
