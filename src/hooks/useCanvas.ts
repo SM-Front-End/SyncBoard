@@ -2,6 +2,7 @@ import { RefObject, useCallback, useMemo, useRef, useState } from "react";
 import {
   colorMap,
   drawDashedLine,
+  drawLine,
   getDrawingPosition,
   reDrawPathGroup,
 } from "../libs/utils/common";
@@ -157,35 +158,41 @@ export default function useCanvas({
     [canvasRefs]
   );
 
-  const draw = throttle((e: canvasEventType) => {
-    if (!canvasRefs.current.length) return;
-    if (!isDrawing.current || touchPoints.current === 2) return;
-    const context = canvasRefs.current[currentPage.current].getContext("2d")!;
-    const { x, y } = getDrawingPosition(
-      canvasRefs.current[currentPage.current],
-      e,
-      devicePixelRatio,
-      scale.current
-    );
+  const draw = useMemo(
+    () =>
+      throttle((e: canvasEventType) => {
+        if (!canvasRefs.current.length) return;
+        if (!isDrawing.current || touchPoints.current === 2) return;
+        const context =
+          canvasRefs.current[currentPage.current].getContext("2d")!;
+        const { x, y } = getDrawingPosition(
+          canvasRefs.current[currentPage.current],
+          e,
+          devicePixelRatio,
+          scale.current
+        );
 
-    if (drawType === "eraser") {
-      drawDashedLine(context, prevPosRef.current.x, prevPosRef.current.y, x, y);
-      erasePathsRef.current.push({
-        x: x / pageSize.width,
-        y: y / pageSize.height,
-        lastX: prevPosRef.current.x / pageSize.width,
-        lastY: prevPosRef.current.y / pageSize.height,
-        lineWidth: defaultLineWidth,
-        color,
-        drawOrder: drawOrder.current,
-        alpha: 1,
-      });
-    } else {
-      paths.current = {
-        ...paths.current,
-        [currentPage.current]: [
-          ...(paths.current[currentPage.current] || []),
-          {
+        if (drawType === "eraser") {
+          drawDashedLine(
+            context,
+            prevPosRef.current.x,
+            prevPosRef.current.y,
+            x,
+            y
+          );
+          erasePathsRef.current.push({
+            x: x / pageSize.width,
+            y: y / pageSize.height,
+            lastX: prevPosRef.current.x / pageSize.width,
+            lastY: prevPosRef.current.y / pageSize.height,
+            lineWidth: defaultLineWidth,
+            color,
+            drawOrder: drawOrder.current,
+            alpha: 1,
+          });
+        } else {
+          const pagePaths = (paths.current[currentPage.current] ??= []);
+          pagePaths.push({
             x: x / pageSize.width,
             y: y / pageSize.height,
             lastX: prevPosRef.current.x / pageSize.width,
@@ -194,14 +201,40 @@ export default function useCanvas({
             color: defaultDrawStyle.color,
             drawOrder: drawOrder.current,
             alpha: drawType === "highlight" ? 0.4 : 1,
-          },
-        ],
-      };
-      redrawPaths(pageSize.width, pageSize.height, currentPage.current);
-    }
+          });
+          if (drawType === "highlight") {
+            // 형광펜은 겹침 부분 농도가 균일해야 하므로 전체 재그리기
+            redrawPaths(pageSize.width, pageSize.height, currentPage.current);
+          } else {
+            drawLine(
+              context,
+              prevPosRef.current.x,
+              prevPosRef.current.y,
+              x,
+              y,
+              {
+                color: defaultDrawStyle.color,
+                lineWidth: defaultLineWidth * pageSize.width,
+                alpha: 1,
+              }
+            );
+          }
+        }
 
-    prevPosRef.current = { x, y };
-  }, 8);
+        prevPosRef.current = { x, y };
+      }, 8),
+    [
+      canvasRefs,
+      color,
+      defaultDrawStyle.color,
+      defaultLineWidth,
+      devicePixelRatio,
+      drawType,
+      pageSize.height,
+      pageSize.width,
+      redrawPaths,
+    ]
+  );
 
   const stopDrawing = useCallback(async () => {
     if (!canvasRefs.current.length) return;

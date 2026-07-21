@@ -177,8 +177,12 @@ export const colorToRGB = (color: (typeof colorMap)[number]) => {
 
 export const isEmptyObject = (obj: object) => Object.keys(obj).length === 0;
 
+export const escapeRegExp = (text: string) =>
+  text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export const highlightPattern = (text: string, pattern: string) => {
-  const regex = new RegExp(pattern, "gi");
+  if (!pattern) return text;
+  const regex = new RegExp(escapeRegExp(pattern), "gi");
   return text.replace(
     regex,
     (value) =>
@@ -537,8 +541,7 @@ export async function base64ToPdf(base64String: string) {
 }
 
 export async function pdfToBase64(pdfDoc: PDFDocument) {
-  const pdfBytes = await pdfDoc.save();
-  return btoa(String.fromCharCode(...new Uint8Array(pdfBytes)));
+  return pdfDoc.saveAsBase64();
 }
 
 // export async function removeAnnots() {
@@ -667,10 +670,7 @@ export async function createPDFFromImgBase64(
   const page = pdfDoc.addPage([image.width, image.height]);
   page.drawImage(image);
 
-  // PDF 저장 및 다운로드
-  const pdfBytes = await pdfDoc.save();
-  const pdfBase64 = await arrayBufferToBase64(pdfBytes);
-  return pdfBase64;
+  return pdfDoc.saveAsBase64();
 }
 
 const convertImageToPng = async (imageBase64: string, imageType: string) => {
@@ -726,18 +726,6 @@ function convertTiffToPng(tiffBase64: string) {
 
   // PNG base64 문자열로 변환
   return canvas.toDataURL("image/png");
-}
-
-function arrayBufferToBase64(buffer: Uint8Array) {
-  let binary = "";
-  const bytes = new Uint8Array(buffer);
-  const len = bytes.byteLength;
-
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-
-  return window.btoa(binary);
 }
 
 export function getReducedPdfSize(

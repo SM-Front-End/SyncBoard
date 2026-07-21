@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 import { useState, useEffect, useCallback } from "react";
 import { pdfjs } from "react-pdf";
+import { escapeRegExp } from "../libs/utils/common";
 
 interface SearchResult {
   pageNumber: number;
@@ -45,7 +46,7 @@ export const usePdfTextSearch = (file: string) => {
           return cachedSearchResults.get(searchText) ?? [];
         }
 
-        const regex = new RegExp(searchText, "gi");
+        const regex = new RegExp(escapeRegExp(searchText), "gi");
         const results = pages.reduce<SearchResult[]>(
           (results, text, pageIndex) => {
             if (text.match(regex)) {

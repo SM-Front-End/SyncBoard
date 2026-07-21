@@ -75,7 +75,7 @@ const Row = typedMemo(
           devicePixelRatio={2}
           renderAnnotationLayer={false}
           onRenderSuccess={onRenderSuccess}
-          customTextRenderer={textRenderer}
+          customTextRenderer={searchText.trim() ? textRenderer : undefined}
           loading={Loading}
           noData={<></>}
         >
