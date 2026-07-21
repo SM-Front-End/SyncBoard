@@ -50,7 +50,7 @@ export default function PdfEngine() {
       pdfConfig.size.width,
       pdfConfig.size.height,
       windowWidth - 128,
-      windowHeight - 84
+      windowHeight - 84,
     );
     return { width: reducedSize.width, height: reducedSize.height };
   }, [pdfConfig.size, windowWidth, windowHeight]);
@@ -81,17 +81,17 @@ export default function PdfEngine() {
 
   const pdfFile = useMemo(
     () => `data:application/pdf;base64,${file.base64}`,
-    [file.base64]
+    [file.base64],
   );
   const pdfOptions = useMemo(
     () => ({
       cMapUrl: "/cmaps/",
     }),
-    []
+    [],
   );
   const containerHeight = useMemo(
     () => (Math.round(pdfSize.height) + 10) * pdfState.totalPage,
-    [pdfSize.height, pdfState.totalPage]
+    [pdfSize.height, pdfState.totalPage],
   );
   const listStyle = useMemo(
     () =>
@@ -101,7 +101,7 @@ export default function PdfEngine() {
             top: Math.max((windowHeight - pdfSize.height) / 2, 0),
           }
         : {},
-    [pdfSize.height, pdfState.totalPage, windowHeight]
+    [pdfSize.height, pdfState.totalPage, windowHeight],
   );
 
   const { getSearchResult } = usePdfTextSearch(pdfDocument);
@@ -125,7 +125,7 @@ export default function PdfEngine() {
         redrawPaths(page.width, page.height, page.pageNumber);
       }
     },
-    [redrawPaths]
+    [redrawPaths],
   );
 
   const itemData = useMemo(
@@ -148,7 +148,7 @@ export default function PdfEngine() {
       setRef,
       startDrawing,
       stopDrawing,
-    ]
+    ],
   );
 
   const onEraseAllClick = useCallback(() => {
@@ -166,7 +166,7 @@ export default function PdfEngine() {
     (ref: ReactZoomPanPinchRef) => {
       scale.current = ref.state.scale;
     },
-    [scale]
+    [scale],
   );
 
   const onThumbnailClick = useCallback(
@@ -178,7 +178,7 @@ export default function PdfEngine() {
       scaleRef.current?.resetTransform(0);
       listRef.current?.scrollToRow({ index: args.pageIndex, align: "start" });
     },
-    [setPdfState]
+    [setPdfState],
   );
 
   const onScroll = useCallback(
@@ -189,7 +189,7 @@ export default function PdfEngine() {
         const scrollRatio = scrollPosition / containerHeight;
         const currentPage = Math.min(
           Math.floor(scrollRatio * pdfState.totalPage) + 1,
-          pdfState.totalPage
+          pdfState.totalPage,
         );
 
         const isNearBottom =
@@ -204,7 +204,7 @@ export default function PdfEngine() {
         }
       });
     },
-    [containerHeight, currentViewingPage, pdfState.totalPage, windowHeight]
+    [containerHeight, currentViewingPage, pdfState.totalPage, windowHeight],
   );
 
   const onDocumentLoadSuccess = useCallback(
@@ -228,14 +228,14 @@ export default function PdfEngine() {
         isInitializedRef.current = true;
         if (file.paths) {
           const savedPaths: { [pageNumber: number]: PathsType[] } = JSON.parse(
-            file.paths
+            file.paths,
           );
           paths.current = savedPaths;
         }
         setInitialLoading(false);
       }
     },
-    [file.isNew, file.paths, paths, setPdfConfig, setPdfState]
+    [file.isNew, file.paths, paths, setPdfConfig, setPdfState],
   );
 
   const onDocumentError = useCallback((error: Error) => {
@@ -275,7 +275,11 @@ export default function PdfEngine() {
                 rowProps={itemData}
                 rowComponent={Row}
                 className="overflow-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-300 hover:scrollbar-thumb-gray-500"
-                style={{ width: windowWidth, height: windowHeight, ...listStyle }}
+                style={{
+                  width: windowWidth,
+                  height: windowHeight,
+                  ...listStyle,
+                }}
               />
             </TransformComponent>
           </TransformWrapper>

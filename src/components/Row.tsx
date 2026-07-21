@@ -1,4 +1,4 @@
-import { CSSProperties, useCallback } from "react";
+import { CSSProperties, useCallback, useState } from "react";
 import { Page } from "react-pdf";
 import { type RowComponentProps } from "react-window";
 import PlaceholderPage from "./PlaceholderPage";
@@ -33,10 +33,17 @@ const Row = typedMemo(
     setRef: (node: HTMLCanvasElement) => void;
     onRenderSuccess: OnRenderSuccess;
   }>) => {
+    const [renderAttempt, setRenderAttempt] = useState(0);
+
     const onRenderError = useCallback(
-      (error: Error) =>
-        console.error(`[react-pdf] page ${index + 1} render error:`, error),
-      [index]
+      (error: Error) => {
+        console.error(`[react-pdf] page ${index + 1} render error:`, error);
+        // 렌더 실패(빠른 스크롤 중 취소 등) 시 Page를 리마운트해 재시도
+        if (renderAttempt < 2) {
+          setRenderAttempt((n) => n + 1);
+        }
+      },
+      [index, renderAttempt]
     );
 
     const textRenderer: CustomTextRenderer = useCallback(
@@ -75,6 +82,7 @@ const Row = typedMemo(
           <PlaceholderPage />
         </div>
         <Page
+          key={renderAttempt}
           pageNumber={index + 1}
           width={pdfSize.width}
           devicePixelRatio={2}
