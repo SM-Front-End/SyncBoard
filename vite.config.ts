@@ -23,12 +23,14 @@ export default defineConfig({
     viteStaticCopy({
       targets: [
         {
-          src: cMapsDir,
-          dest: "",
+          src: `${cMapsDir}/*`,
+          dest: "cmaps",
+          rename: { stripBase: true },
         },
         {
-          src: standardFontsDir,
-          dest: "",
+          src: `${standardFontsDir}/*`,
+          dest: "standard_fonts",
+          rename: { stripBase: true },
         },
       ],
     }),
