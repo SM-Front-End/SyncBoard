@@ -3,10 +3,9 @@ import { Close } from "../assets/icons";
 import { Thumbnail } from "react-pdf";
 import { useAtom } from "jotai";
 import { pdfStateAtom } from "../store/pdf";
-import { PathsType } from "../libs/types/common";
+import { OnItemClickArgs, PathsType } from "../libs/types/common";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { reDrawPathGroup } from "../libs/utils/common";
-import { OnItemClickArgs } from "react-pdf/src/shared/types.js";
 import PlaceholderPage from "./PlaceholderPage";
 
 const ThumbnailOvelay = ({

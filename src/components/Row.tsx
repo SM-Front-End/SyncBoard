@@ -2,13 +2,13 @@ import { CSSProperties, useCallback } from "react";
 import { Page } from "react-pdf";
 import { type RowComponentProps } from "react-window";
 import PlaceholderPage from "./PlaceholderPage";
-import {
-  CustomTextRenderer,
-  OnRenderSuccess,
-} from "react-pdf/src/shared/types.js";
 import { highlightPattern } from "../libs/utils/common";
 import clsx from "clsx";
-import { canvasEventType } from "../libs/types/common";
+import {
+  canvasEventType,
+  CustomTextRenderer,
+  OnRenderSuccess,
+} from "../libs/types/common";
 import { typedMemo } from "../libs/utils/typedMemo";
 
 const Row = typedMemo(
@@ -33,6 +33,12 @@ const Row = typedMemo(
     setRef: (node: HTMLCanvasElement) => void;
     onRenderSuccess: OnRenderSuccess;
   }>) => {
+    const onRenderError = useCallback(
+      (error: Error) =>
+        console.error(`[react-pdf] page ${index + 1} render error:`, error),
+      [index]
+    );
+
     const textRenderer: CustomTextRenderer = useCallback(
       (textItem) => highlightPattern(textItem.str, searchText.trim()),
       [searchText]
@@ -71,10 +77,10 @@ const Row = typedMemo(
         <Page
           pageNumber={index + 1}
           width={pdfSize.width}
-          height={pdfSize.height}
           devicePixelRatio={2}
           renderAnnotationLayer={false}
           onRenderSuccess={onRenderSuccess}
+          onRenderError={onRenderError}
           customTextRenderer={searchText.trim() ? textRenderer : undefined}
           loading={Loading}
           noData={<></>}

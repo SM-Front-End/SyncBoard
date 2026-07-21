@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Document } from "react-pdf";
 import {
   OnItemClickArgs,
   OnRenderSuccess,
-} from "react-pdf/src/shared/types.js";
+  PathsType,
+  PdfDocumentType,
+} from "./libs/types/common";
 import {
   ReactZoomPanPinchContentRef,
   ReactZoomPanPinchRef,
@@ -15,7 +17,6 @@ import PdfOverlay from "./components/PdfOverlay";
 import ThumbnailOvelay from "./components/ThumbnailOvelay";
 import { getReducedPdfSize, removeAllPath } from "./libs/utils/common";
 import { usePdfTextSearch } from "./hooks/usePdfTextSearch";
-import { PathsType } from "./libs/types/common";
 import { useWebviewInterface } from "./hooks/useWebviewInterface";
 import { useAtom, useAtomValue } from "jotai";
 import {
@@ -24,7 +25,6 @@ import {
   pdfStateAtom,
   searchTextAtom,
 } from "./store/pdf";
-import { PDFDocument } from "pdf-lib";
 import { List, type ListImperativeAPI } from "react-window";
 import Row from "./components/Row";
 import { useWindowSize } from "./hooks/useWIndowSIze";
@@ -42,6 +42,8 @@ export default function PdfEngine() {
   const [pdfState, setPdfState] = useAtom(pdfStateAtom);
   const [pdfConfig, setPdfConfig] = useAtom(pdfConfigAtom);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [pdfDocument, setPdfDocument] = useState<PdfDocumentType | null>(null);
+  const isInitializedRef = useRef(false);
 
   const pdfSize = useMemo(() => {
     const reducedSize = getReducedPdfSize(
@@ -102,7 +104,7 @@ export default function PdfEngine() {
     [pdfSize.height, pdfState.totalPage, windowHeight]
   );
 
-  const { getSearchResult } = usePdfTextSearch(pdfFile);
+  const { getSearchResult } = usePdfTextSearch(pdfDocument);
   useWebviewInterface({
     paths,
     getSearchResult,
@@ -205,11 +207,12 @@ export default function PdfEngine() {
     [containerHeight, currentViewingPage, pdfState.totalPage, windowHeight]
   );
 
-  useEffect(() => {
-    const init = async () => {
-      const pdfDoc = await PDFDocument.load(file.base64);
-      const { width, height } = pdfDoc.getPage(0).getSize();
-      const totalPage = pdfDoc.getPageCount();
+  const onDocumentLoadSuccess = useCallback(
+    async (pdf: PdfDocumentType) => {
+      setPdfDocument(pdf);
+
+      const page = await pdf.getPage(1);
+      const { width, height } = page.getViewport({ scale: 1 });
 
       setPdfConfig((prev) => ({
         ...prev,
@@ -218,23 +221,36 @@ export default function PdfEngine() {
       if (!file.isNew) {
         setPdfState((prev) => ({
           ...prev,
-          totalPage,
+          totalPage: pdf.numPages,
         }));
       }
-      if (file.paths) {
-        const savedPaths: { [pageNumber: number]: PathsType[] } = JSON.parse(
-          file.paths
-        );
-        paths.current = savedPaths;
+      if (!isInitializedRef.current) {
+        isInitializedRef.current = true;
+        if (file.paths) {
+          const savedPaths: { [pageNumber: number]: PathsType[] } = JSON.parse(
+            file.paths
+          );
+          paths.current = savedPaths;
+        }
+        setInitialLoading(false);
       }
-      setInitialLoading(false);
-    };
-    init();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [file.isNew, file.paths, paths, setPdfConfig, setPdfState]
+  );
+
+  const onDocumentError = useCallback((error: Error) => {
+    console.error("[react-pdf] document error:", error);
   }, []);
 
   return (
-    <Document file={pdfFile} loading={<></>} options={pdfOptions}>
+    <Document
+      file={pdfFile}
+      loading={<></>}
+      options={pdfOptions}
+      onLoadSuccess={onDocumentLoadSuccess}
+      onLoadError={onDocumentError}
+      onSourceError={onDocumentError}
+    >
       {!initialLoading && (
         <div className="bg-[#94A3B8] min-h-dvh flex-center">
           <TransformWrapper
