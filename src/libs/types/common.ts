@@ -31,9 +31,7 @@ export type PdfStateType = {
   isListOpen: boolean;
   isFullScreen: boolean;
   isStrokeOpen: boolean;
-  pageNumber: number;
   totalPage: number;
-  renderedPageNumber: number;
 };
 export type PdfConfigType = {
   size: { width: number; height: number };

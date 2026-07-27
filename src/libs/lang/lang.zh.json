@@ -3,5 +3,7 @@
   "delete_all": "全部清除",
   "alert_max_5_page": "最多可以添加 5 页。",
   "confirm_delete": "如果选择全部清除，文档中的所有更改都将被删除。您想继续吗？",
-  "alert_max_set_data": "加载文件时出现问题。请删除该文件并重试。"
+  "alert_max_set_data": "加载文件时出现问题。请删除该文件并重试。",
+  "page_render_failed": "无法加载此页面。",
+  "retry": "重试"
 }

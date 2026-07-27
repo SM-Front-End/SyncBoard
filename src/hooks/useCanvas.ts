@@ -1,4 +1,11 @@
-import { RefObject, useCallback, useMemo, useRef, useState } from "react";
+import {
+  RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   colorMap,
   distancePointToSegment,
@@ -111,12 +118,13 @@ export default function useCanvas({
   const draw = useMemo(
     () =>
       throttle((e: canvasEventType) => {
-        if (!canvasRefs.current.length) return;
         if (!isDrawing.current || touchPoints.current === 2) return;
-        const context =
-          canvasRefs.current[currentPage.current].getContext("2d")!;
+        // 스로틀 지연 사이에 해당 행이 언마운트되면 참조가 사라질 수 있다
+        const canvas = canvasRefs.current[currentPage.current];
+        if (!canvas) return;
+        const context = canvas.getContext("2d")!;
         const { x, y } = getDrawingPosition(
-          canvasRefs.current[currentPage.current],
+          canvas,
           e,
           devicePixelRatio,
           scale.current
@@ -186,15 +194,25 @@ export default function useCanvas({
     ]
   );
 
+  // 스로틀된 draw는 trailing 호출이 예약된 상태로 남을 수 있다. 의존성이 바뀌어
+  // 새 인스턴스가 만들어지거나 언마운트될 때 예약분을 취소한다.
+  useEffect(() => () => draw.cancel(), [draw]);
+
   const stopDrawing = useCallback(async () => {
-    if (!canvasRefs.current.length) return;
-    const context = canvasRefs.current[currentPage.current].getContext("2d")!;
+    const canvas = canvasRefs.current[currentPage.current];
+    if (!canvas) {
+      isDrawing.current = false;
+      erasePathsRef.current = [];
+      touchPoints.current = 0;
+      return;
+    }
+    const context = canvas.getContext("2d")!;
     if (drawType === "eraser") {
       const currentPaths = paths.current[currentPage.current] || [];
       const erasePaths = erasePathsRef.current;
 
       // 지우기 경로와 겹치는 획의 drawOrder 수집
-      const drawOrdersToDelete = new Set();
+      const drawOrdersToDelete = new Set<string>();
 
       erasePaths.forEach((erasePath) => {
         const eraseX = erasePath.x * pageSize.width;
@@ -230,12 +248,7 @@ export default function useCanvas({
       };
 
       // 점선도 지우기
-      context.clearRect(
-        0,
-        0,
-        canvasRefs.current[currentPage.current].width,
-        canvasRefs.current[currentPage.current].height
-      );
+      context.clearRect(0, 0, canvas.width, canvas.height);
       redrawPaths(pageSize.width, pageSize.height, currentPage.current);
     } else {
       if (touchPoints.current === 1) {

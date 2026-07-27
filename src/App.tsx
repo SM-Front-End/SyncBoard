@@ -7,8 +7,9 @@ import {
   createOrMergePdf,
   createPDFFromImgBase64,
 } from "./libs/utils/common";
+import { reportErrorToNative } from "./libs/utils/errorReporter";
 import { useSetAtom } from "jotai";
-import { fileAtom } from "./store/pdf";
+import { documentBase64Atom, fileAtom } from "./store/pdf";
 import { isTablet } from "react-device-detect";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?worker&url";
 import { useTranslation } from "./hooks/useTranslation";
@@ -20,6 +21,7 @@ function App() {
   const attemptsRef = useRef(0);
   const { changeLanguage, t } = useTranslation();
   const setFile = useSetAtom(fileAtom);
+  const setDocumentBase64 = useSetAtom(documentBase64Atom);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -32,33 +34,43 @@ function App() {
           isNew: false,
           type: "pdf",
         });
+        setDocumentBase64(base64);
         changeLanguage("ko");
         setIsLoading(false);
         return;
       }
 
       window.webviewApi = async (appData: string) => {
-        const param = JSON.parse(appData);
-        setFile({
-          base64: param?.data?.isNew
+        // JSON 파싱 실패, 지원하지 않는 이미지 형식 등으로 던지면 isLoading이
+        // 영원히 true로 남는다. 네이티브가 다른 파일을 보내거나 안내할 수 있도록
+        // 실패를 알린다.
+        try {
+          const param = JSON.parse(appData);
+          const base64 = param?.data?.isNew
             ? await createOrMergePdf()
             : param?.data?.type === "pdf"
               ? param?.data?.base64
               : await createPDFFromImgBase64(
                   param?.data?.base64,
                   param?.data?.type,
-                ),
-          paths: param?.data?.paths,
-          isNew: param?.data?.isNew,
-          type: param?.data?.type,
-        });
-        changeLanguage(param?.data?.lang ?? "ko");
-        setIsLoading(false);
+                );
+          setFile({
+            base64,
+            paths: param?.data?.paths,
+            isNew: param?.data?.isNew,
+            type: param?.data?.type,
+          });
+          setDocumentBase64(base64);
+          changeLanguage(param?.data?.lang ?? "ko");
+          setIsLoading(false);
+        } catch (error) {
+          reportErrorToNative("init", error, { fatal: true });
+        }
       };
     };
 
     initializeFile();
-  }, [changeLanguage, setFile]);
+  }, [changeLanguage, setDocumentBase64, setFile]);
 
   useEffect(() => {
     const interval = 3000;
@@ -67,6 +79,11 @@ function App() {
       if (isLoading) {
         if (attemptsRef.current === 3) {
           clearInterval(checkLoading);
+          reportErrorToNative(
+            "init",
+            new Error("setPdfData 3회 요청 후에도 파일을 받지 못함"),
+            { fatal: true },
+          );
           alert(t("alert_max_set_data"));
         }
         if (window.AndroidInterface && window.AndroidInterface.setPdfData) {

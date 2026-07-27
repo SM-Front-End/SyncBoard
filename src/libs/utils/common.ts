@@ -98,6 +98,16 @@ export const drawLine = (
   context.stroke();
 };
 
+// PathsType 한 항목은 (lastX,lastY) → (x,y) 선분 하나다. 따라서 그룹의 꼭짓점은
+// 첫 항목의 시작점 + 각 항목의 끝점이며, 항목이 하나뿐이어도 선분 하나가 나온다.
+export const getPathGroupVertices = (group: PathsType[]) => {
+  const vertices = [{ x: group[0].lastX, y: group[0].lastY }];
+  for (const point of group) {
+    vertices.push({ x: point.x, y: point.y });
+  }
+  return vertices;
+};
+
 export const reDrawPathGroup = (
   context: CanvasRenderingContext2D,
   group: PathsType[],
@@ -113,9 +123,10 @@ export const reDrawPathGroup = (
   context.lineWidth = style.lineWidth * pageWidth;
 
   // 패스 그리기
-  context.moveTo(group[0].x * pageWidth, group[0].y * pageHeight);
-  for (let i = 1; i < group.length; i++) {
-    context.lineTo(group[i].x * pageWidth, group[i].y * pageHeight);
+  const vertices = getPathGroupVertices(group);
+  context.moveTo(vertices[0].x * pageWidth, vertices[0].y * pageHeight);
+  for (let i = 1; i < vertices.length; i++) {
+    context.lineTo(vertices[i].x * pageWidth, vertices[i].y * pageHeight);
   }
   context.stroke();
 
@@ -130,16 +141,43 @@ export const colorToRGB = (color: (typeof colorMap)[number]) => {
 export const escapeRegExp = (text: string) =>
   text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export const highlightPattern = (text: string, pattern: string) => {
-  if (!pattern) return text;
-  const regex = new RegExp(escapeRegExp(pattern), "gi");
-  return text.replace(
-    regex,
-    (value) =>
-      `<span style="
-        background-color: rgba(255, 255, 0, 0.4);
-      ">${value}</span>`
-  );
+export const createHighlightRegex = (pattern: string) =>
+  pattern ? new RegExp(escapeRegExp(pattern), "gi") : null;
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+};
+
+const escapeHtml = (text: string) =>
+  text.replace(/[&<>"]/g, (char) => HTML_ESCAPES[char]);
+
+// customTextRenderer의 반환값은 react-pdf가 HTML로 파싱하므로, 본문에 <, & 등이
+// 있으면 태그/엔티티로 해석돼 텍스트 레이어가 깨진다. 원문은 반드시 이스케이프한다.
+export const highlightPattern = (text: string, regex: RegExp | null) => {
+  if (!regex) return text;
+
+  // 매칭은 원문 기준으로 하고, 조각 단위로 이스케이프해서 이어붙인다.
+  // (먼저 이스케이프하면 "&" 검색이 "&amp;" 안쪽에 걸리는 등 오탐이 생긴다.)
+  let result = "";
+  let lastIndex = 0;
+  regex.lastIndex = 0;
+
+  for (let match = regex.exec(text); match; match = regex.exec(text)) {
+    if (match[0].length === 0) {
+      regex.lastIndex += 1;
+      continue;
+    }
+    result += escapeHtml(text.slice(lastIndex, match.index));
+    result += `<span style="background-color: rgba(255, 255, 0, 0.4);">${escapeHtml(
+      match[0]
+    )}</span>`;
+    lastIndex = match.index + match[0].length;
+  }
+
+  return result + escapeHtml(text.slice(lastIndex));
 };
 
 export const removeAllPath = (
@@ -161,14 +199,16 @@ export const forEachPathGroup = (
     style: { color: string; lineWidth: number; alpha: number }
   ) => void
 ) => {
-  if (!points || points.length <= 1) return;
+  if (!points || points.length === 0) return;
 
-  let currentGroup: PathsType[] = [];
-  let currentStyle = {
-    color: points[1].color,
-    lineWidth: points[1].lineWidth,
-    alpha: points[1].alpha,
-  };
+  const styleOf = (point: PathsType) => ({
+    color: point.color,
+    lineWidth: point.lineWidth,
+    alpha: point.alpha,
+  });
+
+  let currentGroup: PathsType[] = [points[0]];
+  let currentStyle = styleOf(points[0]);
 
   for (let i = 1; i < points.length; i++) {
     // 선이 이어진 경우
@@ -176,27 +216,18 @@ export const forEachPathGroup = (
       points[i].lastX === points[i - 1].x &&
       points[i].lastY === points[i - 1].y
     ) {
-      if (i === 1) currentGroup.push(points[0]);
       currentGroup.push(points[i]);
       continue;
     }
 
     // 선이 띄워진 경우: 지금까지의 그룹을 처리하고 새 그룹 시작
-    if (currentGroup.length) {
-      callback(currentGroup, currentStyle);
-    }
+    callback(currentGroup, currentStyle);
     currentGroup = [points[i]];
-    currentStyle = {
-      color: points[i].color,
-      lineWidth: points[i].lineWidth,
-      alpha: points[i].alpha,
-    };
+    currentStyle = styleOf(points[i]);
   }
 
   // 마지막 그룹 처리
-  if (currentGroup.length) {
-    callback(currentGroup, currentStyle);
-  }
+  callback(currentGroup, currentStyle);
 };
 
 // 점 (px, py)와 선분 (x1,y1)-(x2,y2) 사이의 최단 거리
@@ -261,16 +292,18 @@ const drawPDFPathGroup = (
 ) => {
   // 필기 좌표는 DRAWING_DPR 배율 기준으로 정규화되어 있으므로, 기기의
   // window.devicePixelRatio가 아니라 항상 같은 고정 배율로 되돌려야 한다.
+  const vertices = getPathGroupVertices(group);
+
   if (style.alpha !== 1) {
     // 첫 점의 좌표로 시작 (y좌표는 pageHeight에서 빼서 뒤집기)
-    let pathData = `M ${(group[0].x * pageWidth) / DRAWING_DPR},${
-      (group[0].y * pageHeight) / DRAWING_DPR
+    let pathData = `M ${(vertices[0].x * pageWidth) / DRAWING_DPR},${
+      (vertices[0].y * pageHeight) / DRAWING_DPR
     }`;
 
     // 나머지 점들을 L 명령어로 연결
-    for (let i = 1; i < group.length; i++) {
-      pathData += ` L ${(group[i].x * pageWidth) / DRAWING_DPR},${
-        (group[i].y * pageHeight) / DRAWING_DPR
+    for (let i = 1; i < vertices.length; i++) {
+      pathData += ` L ${(vertices[i].x * pageWidth) / DRAWING_DPR},${
+        (vertices[i].y * pageHeight) / DRAWING_DPR
       }`;
     }
     page.drawSvgPath(pathData, {
@@ -282,15 +315,15 @@ const drawPDFPathGroup = (
       y: pageHeight,
     });
   } else {
-    for (let i = 1; i < group.length; i++) {
+    for (let i = 1; i < vertices.length; i++) {
       page.drawLine({
         start: {
-          x: (group[i - 1].x * pageWidth) / DRAWING_DPR,
-          y: pageHeight - (group[i - 1].y * pageHeight) / DRAWING_DPR,
+          x: (vertices[i - 1].x * pageWidth) / DRAWING_DPR,
+          y: pageHeight - (vertices[i - 1].y * pageHeight) / DRAWING_DPR,
         },
         end: {
-          x: (group[i].x * pageWidth) / DRAWING_DPR,
-          y: pageHeight - (group[i].y * pageHeight) / DRAWING_DPR,
+          x: (vertices[i].x * pageWidth) / DRAWING_DPR,
+          y: pageHeight - (vertices[i].y * pageHeight) / DRAWING_DPR,
         },
         color: colorToRGB(style.color as (typeof colorMap)[number]),
         thickness: (style.lineWidth * pageWidth) / DRAWING_DPR,

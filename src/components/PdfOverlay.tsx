@@ -31,6 +31,7 @@ import ColorPicker from "./ColorPicker";
 import { useAtom } from "jotai";
 import { fileAtom, pdfConfigAtom, pdfStateAtom } from "../store/pdf";
 import { useTranslation } from "../hooks/useTranslation";
+import { MAX_PAGE } from "../hooks/useWebviewInterface";
 
 interface Props {
   paths: React.RefObject<{ [pageNumber: number]: PathsType[] }>;
@@ -130,19 +131,18 @@ const PdfOverlay = ({
                 <>
                   <button
                     onClick={async () => {
-                      if (pdfState.totalPage === 5) {
-                        alert("최대 5페이지까지 추가 가능합니다.");
+                      if (pdfState.totalPage >= MAX_PAGE) {
+                        alert(t("alert_max_5_page"));
                         return;
                       }
                       const newBase64 = await createOrMergePdf(file.base64);
-                      setPdfState((prev) => ({
-                        ...prev,
-                        pageNumber: prev.totalPage + 1,
-                        totalPage: prev.totalPage + 1,
-                      }));
                       setFile((prev) => ({
                         ...prev,
                         base64: newBase64,
+                      }));
+                      setPdfState((prev) => ({
+                        ...prev,
+                        totalPage: prev.totalPage + 1,
                       }));
                     }}
                     className="pointer-events-auto w-[106px] h-[52px] rounded-xl bg-white shadow-black shadow-sm flex-center gap-[9px]"
