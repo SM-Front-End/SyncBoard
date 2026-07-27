@@ -56,7 +56,17 @@ export default function PdfEngine() {
       windowWidth - 128,
       windowHeight - 84,
     );
-    return { width: reducedSize.width, height: reducedSize.height };
+    // react-pdf는 캔버스 CSS 크기를 floor(viewport)로 잡는다(Page/Canvas.js).
+    // 같은 식으로 정수 크기를 만들어야 흰 배경/행 높이가 캔버스와 정확히 맞는다.
+    // 어긋나면 페이지 아래에 1px 미만의 흰 띠가 남는다.
+    const width = Math.floor(reducedSize.width);
+    if (pdfConfig.size.width <= 0) {
+      return { width, height: Math.floor(reducedSize.height) };
+    }
+    // 연산 순서까지 react-pdf와 동일하게 맞춘다(scale을 먼저 구하고 곱한다).
+    // 순서가 다르면 부동소수점 오차로 floor 결과가 1px 어긋날 수 있다.
+    const scale = width / pdfConfig.size.width;
+    return { width, height: Math.floor(pdfConfig.size.height * scale) };
   }, [pdfConfig.size, windowWidth, windowHeight]);
 
   const {
@@ -98,7 +108,7 @@ export default function PdfEngine() {
     [],
   );
   const containerHeight = useMemo(
-    () => (Math.round(pdfSize.height) + 10) * pdfState.totalPage,
+    () => (pdfSize.height + 10) * pdfState.totalPage,
     [pdfSize.height, pdfState.totalPage],
   );
   const listStyle = useMemo(
@@ -252,9 +262,11 @@ export default function PdfEngine() {
       const page = await pdf.getPage(1);
       const { width, height } = page.getViewport({ scale: 1 });
 
+      // floor하면 종횡비가 react-pdf가 쓰는 실제 viewport와 미세하게 어긋난다.
+      // pdfSize 계산이 이 비율에 의존하므로 원본 값을 그대로 보관한다.
       setPdfConfig((prev) => ({
         ...prev,
-        size: { width: Math.floor(width), height: Math.floor(height) },
+        size: { width, height },
       }));
       // 원본 문서가 새로 열릴 때만 실행된다(페이지 추가는 문서를 다시 로드하지
       // 않는다). 따라서 numPages가 곧 시작 페이지 수이며, 이후 newPage가
@@ -312,7 +324,7 @@ export default function PdfEngine() {
                 listRef={listRef}
                 onScroll={onScroll}
                 rowCount={pdfState.totalPage}
-                rowHeight={Math.round(pdfSize.height) + 10}
+                rowHeight={pdfSize.height + 10}
                 rowProps={itemData}
                 rowComponent={Row}
                 className="overflow-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-300 hover:scrollbar-thumb-gray-500"
