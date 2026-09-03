@@ -135,10 +135,13 @@ const PdfOverlay = ({
                         alert(t("alert_max_5_page"));
                         return;
                       }
-                      const newBase64 = await createOrMergePdf(file.base64);
+                      const newBase64 = await createOrMergePdf(
+                        file.bytes ?? file.base64,
+                      );
                       setFile((prev) => ({
                         ...prev,
                         base64: newBase64,
+                        bytes: null,
                       }));
                       setPdfState((prev) => ({
                         ...prev,
@@ -151,7 +154,10 @@ const PdfOverlay = ({
                   </button>
                   <button
                     onClick={async () => {
-                      await getModifiedPDFBase64(paths.current, file.base64);
+                      await getModifiedPDFBase64(
+                        paths.current,
+                        file.bytes ?? file.base64,
+                      );
                     }}
                     className="pointer-events-auto w-[106px] h-[52px] rounded-xl bg-white shadow-black shadow-sm flex-center gap-[9px]"
                   >

@@ -9,75 +9,132 @@ import {
 } from "./libs/utils/common";
 import { reportErrorToNative } from "./libs/utils/errorReporter";
 import { useSetAtom } from "jotai";
-import { documentBase64Atom, fileAtom } from "./store/pdf";
+import {
+  documentSourceAtom,
+  fileAtom,
+  type DocumentSource,
+} from "./store/pdf";
 import { isTablet } from "react-device-detect";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.min.mjs?worker&url";
 import { useTranslation } from "./hooks/useTranslation";
 import Loading from "./components/Loading";
+import { parseWebviewFileData } from "./libs/utils/webviewFileSource";
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
 
+type FileLoadStatus = "waiting" | "loading" | "loaded";
+
 function App() {
   const attemptsRef = useRef(0);
+  const loadRequestIdRef = useRef(0);
+  const loadStatusRef = useRef<FileLoadStatus>("waiting");
   const { changeLanguage, t } = useTranslation();
   const setFile = useSetAtom(fileAtom);
-  const setDocumentBase64 = useSetAtom(documentBase64Atom);
+  const setDocumentSource = useSetAtom(documentSourceAtom);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    let isDisposed = false;
+
     const initializeFile = async () => {
       if (__DEV__ || !isTablet) {
         const { base64 } = await import("./libs/mock/base64");
+        if (isDisposed) return;
         setFile({
           base64: base64,
+          bytes: null,
           paths: "",
           isNew: false,
           type: "pdf",
         });
-        setDocumentBase64(base64);
+        setDocumentSource({ kind: "base64", base64 });
         changeLanguage("ko");
+        loadStatusRef.current = "loaded";
         setIsLoading(false);
         return;
       }
 
       window.webviewApi = async (appData: string) => {
-        // JSON 파싱 실패, 지원하지 않는 이미지 형식 등으로 던지면 isLoading이
-        // 영원히 true로 남는다. 네이티브가 다른 파일을 보내거나 안내할 수 있도록
-        // 실패를 알린다.
+        // 먼저 payload 전체를 검증한다. 잘못된 새 요청 때문에 정상적으로 진행 중인
+        // 이전 요청이 무효화되지 않도록 request id 갱신은 검증 뒤에 한다.
+        let data;
         try {
-          const param = JSON.parse(appData);
-          const base64 = param?.data?.isNew
-            ? await createOrMergePdf()
-            : param?.data?.type === "pdf"
-              ? param?.data?.base64
-              : await createPDFFromImgBase64(
-                  param?.data?.base64,
-                  param?.data?.type,
-                );
+          data = parseWebviewFileData(appData);
+        } catch (error) {
+          reportErrorToNative("init", error, { fatal: true });
+          return;
+        }
+
+        const requestId = loadRequestIdRef.current + 1;
+        loadRequestIdRef.current = requestId;
+        loadStatusRef.current = "loading";
+
+        // URL은 react-pdf에 그대로 넘긴다. Base64 입력과 새 문서/이미지만 기존
+        // 내부 Base64 경로로 정규화한다.
+        try {
+          let base64 = "";
+          let documentSource: DocumentSource;
+
+          if (data.isNew) {
+            base64 = await createOrMergePdf();
+            documentSource = { kind: "base64", base64 };
+          } else if (data.source?.kind === "url") {
+            documentSource = data.source;
+          } else {
+            if (!data.source || data.source.kind !== "base64") {
+              throw new Error("문서 원본 데이터가 없습니다.");
+            }
+            base64 =
+              data.type === "pdf"
+                ? data.source.base64
+                : await createPDFFromImgBase64(
+                    data.source.base64,
+                    data.type,
+                  );
+            documentSource = { kind: "base64", base64 };
+          }
+
+          if (
+            isDisposed ||
+            requestId !== loadRequestIdRef.current
+          ) {
+            return;
+          }
+
           setFile({
             base64,
-            paths: param?.data?.paths,
-            isNew: param?.data?.isNew,
-            type: param?.data?.type,
+            bytes: null,
+            paths: data.paths,
+            isNew: data.isNew,
+            type: data.type,
           });
-          setDocumentBase64(base64);
-          changeLanguage(param?.data?.lang ?? "ko");
+          setDocumentSource(documentSource);
+          changeLanguage(data.lang);
+          loadStatusRef.current = "loaded";
           setIsLoading(false);
         } catch (error) {
+          if (isDisposed || requestId !== loadRequestIdRef.current) return;
+          loadStatusRef.current = "waiting";
           reportErrorToNative("init", error, { fatal: true });
         }
       };
     };
 
-    initializeFile();
-  }, [changeLanguage, setDocumentBase64, setFile]);
+    void initializeFile();
+
+    return () => {
+      isDisposed = true;
+      loadRequestIdRef.current += 1;
+    };
+  }, [changeLanguage, setDocumentSource, setFile]);
 
   useEffect(() => {
     const interval = 3000;
 
     const checkLoading = setInterval(() => {
       if (isLoading) {
-        if (attemptsRef.current === 3) {
+        if (loadStatusRef.current !== "waiting") return;
+        if (attemptsRef.current >= 3) {
           clearInterval(checkLoading);
           reportErrorToNative(
             "init",
@@ -85,6 +142,7 @@ function App() {
             { fatal: true },
           );
           alert(t("alert_max_set_data"));
+          return;
         }
         if (window.AndroidInterface && window.AndroidInterface.setPdfData) {
           window.AndroidInterface.setPdfData(true);

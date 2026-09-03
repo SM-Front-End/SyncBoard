@@ -253,11 +253,10 @@ export const getModifiedPDFBase64 = async (
   paths: {
     [pageNumber: number]: PathsType[];
   },
-  base64Data: string
+  pdfData: string | Uint8Array
 ) => {
   // 기존 PDF 로드
-  const existingPdfBytes = base64Data;
-  const pdfDoc = await PDFDocument.load(existingPdfBytes);
+  const pdfDoc = await PDFDocument.load(pdfData);
   for (let i = 0; i < pdfDoc.getPageCount(); i++) {
     const points = paths[i + 1];
     const page = pdfDoc.getPage(i);
@@ -334,15 +333,15 @@ const drawPDFPathGroup = (
   }
 };
 
-export async function createOrMergePdf(base64String?: string) {
+export async function createOrMergePdf(pdfData?: string | Uint8Array) {
   let pdfDoc: PDFDocument;
 
-  if (!base64String) {
+  if (!pdfData) {
     // Base64 문자열이 없는 경우 새로운 PDF 문서 생성
     pdfDoc = await PDFDocument.create();
   } else {
-    // 기존 Base64 문자열이 있는 경우 해당 PDF 로드
-    pdfDoc = await base64ToPdf(base64String);
+    // 기존 Base64 문자열 또는 바이트가 있는 경우 해당 PDF 로드
+    pdfDoc = await PDFDocument.load(pdfData);
   }
 
   // 새로운 페이지 추가

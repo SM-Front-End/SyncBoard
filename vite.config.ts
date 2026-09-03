@@ -17,6 +17,8 @@ const standardFontsDir = normalizePath(
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // Android assets/webviewer/처럼 중첩된 경로에서도 JS/CSS/Worker를 찾게 한다.
+  base: "./",
   plugins: [
     react(),
     svgr(),

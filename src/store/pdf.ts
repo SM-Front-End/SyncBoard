@@ -3,14 +3,17 @@ import { DRAWING_DPR } from "../libs/utils/common";
 
 export const fileAtom = atom({
   base64: "",
+  bytes: null as Uint8Array | null,
   paths: "",
   isNew: false,
   type: "",
 });
-// <Document>에 넘길 원본 바이트. fileAtom.base64는 페이지 추가/저장의 정본이라
-// 계속 갱신되지만, 그 값을 그대로 Document에 다시 넣으면 문서 전체가 재파싱되고
-// 모든 페이지가 다시 렌더된다. 그래서 파일이 실제로 교체될 때만 이 값을 바꾼다.
-export const documentBase64Atom = atom("");
+export type DocumentSource =
+  | { kind: "base64"; base64: string }
+  | { kind: "url"; url: string };
+// <Document>에 넘길 최초 원본. 편집용 fileAtom 데이터가 페이지 추가로 바뀌어도
+// 이 값은 유지해 문서 전체가 다시 파싱·렌더되지 않게 한다.
+export const documentSourceAtom = atom<DocumentSource | null>(null);
 export const searchTextAtom = atom("");
 export const pdfStateAtom = atom({
   isToolBarOpen: false,

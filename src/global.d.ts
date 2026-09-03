@@ -19,7 +19,10 @@ type WebviewInterface = {
 };
 
 interface Window extends WebviewInterface {
-  /** 네이티브가 PDF 데이터를 넘겨주는 진입점 */
+  /**
+   * 네이티브가 문서를 넘겨주는 진입점. 기존 data.base64와 아래 URL 입력을 모두 지원.
+   * { data: { type: "pdf", source: { kind: "url", url: "https://appassets.androidplatform.net/doc/<id>" } } }
+   */
   webviewApi: (data: string) => Promise<void>;
   AndroidInterface: {
     getBase64: (data: string) => void;

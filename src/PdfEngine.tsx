@@ -21,7 +21,7 @@ import { usePdfTextSearch } from "./hooks/usePdfTextSearch";
 import { useWebviewInterface } from "./hooks/useWebviewInterface";
 import { useAtom, useAtomValue } from "jotai";
 import {
-  documentBase64Atom,
+  documentSourceAtom,
   fileAtom,
   pdfConfigAtom,
   pdfStateAtom,
@@ -41,8 +41,10 @@ export default function PdfEngine() {
   const listRef = useRef<ListImperativeAPI>(null);
   const scrollRafRef = useRef<number | null>(null);
   const searchText = useAtomValue(searchTextAtom);
-  const file = useAtomValue(fileAtom);
-  const documentBase64 = useAtomValue(documentBase64Atom);
+  const [file, setFile] = useAtom(fileAtom);
+  const documentSource = useAtomValue(documentSourceAtom);
+  const documentSourceRef = useRef(documentSource);
+  documentSourceRef.current = documentSource;
   const [pdfState, setPdfState] = useAtom(pdfStateAtom);
   const [pdfConfig, setPdfConfig] = useAtom(pdfConfigAtom);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -94,16 +96,21 @@ export default function PdfEngine() {
   });
 
   const pdfFile = useMemo(
-    () => `data:application/pdf;base64,${documentBase64}`,
-    [documentBase64],
+    () => {
+      if (!documentSource) return null;
+      return documentSource.kind === "url"
+        ? documentSource.url
+        : `data:application/pdf;base64,${documentSource.base64}`;
+    },
+    [documentSource],
   );
   // 원본 문서가 실제로 담고 있는 페이지 수. 이보다 뒤 번호는 newPage로 덧붙인
   // 빈 페이지이며, 원본을 다시 파싱하지 않기 위해 로컬에서 빈 화면으로 그린다.
   const documentPageCount = pdfDocument?.numPages ?? 0;
   const pdfOptions = useMemo(
     () => ({
-      cMapUrl: "/cmaps/",
-      standardFontDataUrl: "/standard_fonts/",
+      cMapUrl: `${import.meta.env.BASE_URL}cmaps/`,
+      standardFontDataUrl: `${import.meta.env.BASE_URL}standard_fonts/`,
     }),
     [],
   );
@@ -257,36 +264,52 @@ export default function PdfEngine() {
 
   const onDocumentLoadSuccess = useCallback(
     async (pdf: PdfDocumentType) => {
-      setPdfDocument(pdf);
+      const loadedSource = documentSource;
 
-      const page = await pdf.getPage(1);
-      const { width, height } = page.getViewport({ scale: 1 });
+      try {
+        setPdfDocument(pdf);
 
-      // floor하면 종횡비가 react-pdf가 쓰는 실제 viewport와 미세하게 어긋난다.
-      // pdfSize 계산이 이 비율에 의존하므로 원본 값을 그대로 보관한다.
-      setPdfConfig((prev) => ({
-        ...prev,
-        size: { width, height },
-      }));
-      // 원본 문서가 새로 열릴 때만 실행된다(페이지 추가는 문서를 다시 로드하지
-      // 않는다). 따라서 numPages가 곧 시작 페이지 수이며, 이후 newPage가
-      // totalPage를 증가시킨다.
-      setPdfState((prev) => ({
-        ...prev,
-        totalPage: pdf.numPages,
-      }));
-      if (!isInitializedRef.current) {
-        isInitializedRef.current = true;
-        if (file.paths) {
-          const savedPaths: { [pageNumber: number]: PathsType[] } = JSON.parse(
-            file.paths,
-          );
-          paths.current = savedPaths;
+        const page = await pdf.getPage(1);
+        const { width, height } = page.getViewport({ scale: 1 });
+
+        // URL은 react-pdf가 직접 읽는다. 로드가 끝난 뒤 같은 바이트를 받아 두면
+        // 저장/페이지 추가 시 다시 fetch하거나 Base64 원본을 요구하지 않아도 된다.
+        if (loadedSource?.kind === "url") {
+          const bytes = await pdf.getData();
+          if (documentSourceRef.current !== loadedSource) return;
+          setFile((prev) => ({ ...prev, bytes }));
         }
-        setInitialLoading(false);
+
+        // floor하면 종횡비가 react-pdf가 쓰는 실제 viewport와 미세하게 어긋난다.
+        // pdfSize 계산이 이 비율에 의존하므로 원본 값을 그대로 보관한다.
+        setPdfConfig((prev) => ({
+          ...prev,
+          size: { width, height },
+        }));
+        // 원본 문서가 새로 열릴 때만 실행된다(페이지 추가는 문서를 다시 로드하지
+        // 않는다). 따라서 numPages가 곧 시작 페이지 수이며, 이후 newPage가
+        // totalPage를 증가시킨다.
+        setPdfState((prev) => ({
+          ...prev,
+          totalPage: pdf.numPages,
+        }));
+        if (!isInitializedRef.current) {
+          isInitializedRef.current = true;
+          if (file.paths) {
+            const savedPaths: { [pageNumber: number]: PathsType[] } = JSON.parse(
+              file.paths,
+            );
+            paths.current = savedPaths;
+          }
+          setInitialLoading(false);
+        }
+      } catch (error) {
+        if (documentSourceRef.current === loadedSource) {
+          reportErrorToNative("document", error, { fatal: true });
+        }
       }
     },
-    [file.paths, paths, setPdfConfig, setPdfState],
+    [documentSource, file.paths, paths, setFile, setPdfConfig, setPdfState],
   );
 
   const onDocumentError = useCallback((error: Error) => {

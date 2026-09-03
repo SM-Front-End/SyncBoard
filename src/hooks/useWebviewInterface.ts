@@ -37,6 +37,12 @@ export const useWebviewInterface = ({
   useEffect(() => {
     if (__DEV__) return;
 
+    const getPdfData = () => {
+      if (file.bytes !== null) return file.bytes;
+      if (file.base64.length > 0) return file.base64;
+      throw new Error("PDF 원본이 아직 준비되지 않았습니다.");
+    };
+
     // 타입을 명시해야 Object.assign이 검사를 우회하지 않는다.
     // (이게 없어서 미선언 메서드 newPageSetting이 그동안 그냥 통과했다)
     const webviewInterface: WebviewInterface = {
@@ -44,7 +50,10 @@ export const useWebviewInterface = ({
         // 실패하면 네이티브는 오지 않을 getBase64 콜백을 계속 기다리게 된다.
         // 반드시 실패를 알려 대기를 끊어 준다.
         try {
-          const data = await getModifiedPDFBase64(paths.current, file.base64);
+          const data = await getModifiedPDFBase64(
+            paths.current,
+            getPdfData(),
+          );
           window.AndroidInterface.getBase64(data);
         } catch (error) {
           reportErrorToNative("save", error, { fatal: true });
@@ -64,10 +73,10 @@ export const useWebviewInterface = ({
         }
         isAddingPageRef.current = true;
         try {
-          const newBase64 = await createOrMergePdf(file.base64);
-          // fileAtom만 갱신하고 documentBase64Atom은 그대로 두어 <Document>가
+          const newBase64 = await createOrMergePdf(getPdfData());
+          // fileAtom만 갱신하고 documentSourceAtom은 그대로 두어 <Document>가
           // 재파싱되지 않게 한다. 추가된 페이지는 Row가 빈 페이지로 렌더한다.
-          setFile((prev) => ({ ...prev, base64: newBase64 }));
+          setFile((prev) => ({ ...prev, base64: newBase64, bytes: null }));
           setPdfState((prev) => ({ ...prev, totalPage: prev.totalPage + 1 }));
           window.AndroidInterface.getPdfData(newBase64);
         } catch (error) {
@@ -108,6 +117,17 @@ export const useWebviewInterface = ({
 
     // 웹뷰 인터페이스 메서드들을 window 객체에 할당
     Object.assign(window, webviewInterface);
+
+    // 문서 상태가 바뀌거나 뷰어가 내려갈 때 이전 문서를 캡처한 함수가 남지 않게 한다.
+    return () => {
+      for (const key of Object.keys(
+        webviewInterface,
+      ) as (keyof WebviewInterface)[]) {
+        if (window[key] === webviewInterface[key]) {
+          Reflect.deleteProperty(window, key);
+        }
+      }
+    };
   }, [
     file,
     paths,
