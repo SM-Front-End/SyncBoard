@@ -19,7 +19,7 @@ import {
   Trash,
   Zoom,
 } from "../assets/icons";
-import { Dispatch, SetStateAction, useState } from "react";
+import { Dispatch, SetStateAction } from "react";
 import {
   __DEV__,
   colorMap,
@@ -35,6 +35,7 @@ import { MAX_PAGE } from "../hooks/useWebviewInterface";
 
 interface Props {
   paths: React.RefObject<{ [pageNumber: number]: PathsType[] }>;
+  canDraw: boolean;
   drawType: DrawType;
   color: (typeof colorMap)[number];
   touchType: TouchType;
@@ -58,6 +59,7 @@ const STROKE_STEPS = [
 
 const PdfOverlay = ({
   paths,
+  canDraw,
   drawType,
   color,
   touchType,
@@ -71,7 +73,7 @@ const PdfOverlay = ({
   setIsWrongTouch,
 }: Props) => {
   const { t } = useTranslation();
-  const [zoomEnabled, setZoomEnabled] = useState(false);
+  const zoomEnabled = !canDraw;
   const [file, setFile] = useAtom(fileAtom);
   const [pdfState, setPdfState] = useAtom(pdfStateAtom);
   const [pdfConfig, setPdfConfig] = useAtom(pdfConfigAtom);
@@ -115,7 +117,7 @@ const PdfOverlay = ({
             <>
               <button
                 onClick={() => {
-                  setCanDraw((prev) => !prev);
+                  setCanDraw(true);
                   setPdfState((prev) => ({
                     ...prev,
                     isToolBarOpen: true,
@@ -175,7 +177,6 @@ const PdfOverlay = ({
                   onClick={() => {
                     setCanDraw(true);
                     setDrawType("pen");
-                    setZoomEnabled(false);
                   }}
                   className={clsx(
                     "pointer-events-auto size-[44px] rounded-lg flex-center",
@@ -194,7 +195,6 @@ const PdfOverlay = ({
                   onClick={() => {
                     setCanDraw(true);
                     setDrawType("highlight");
-                    setZoomEnabled(false);
                   }}
                   className={clsx(
                     "pointer-events-auto size-[44px] rounded-lg flex-center",
@@ -215,7 +215,6 @@ const PdfOverlay = ({
                   onClick={() => {
                     setCanDraw(true);
                     setDrawType("eraser");
-                    setZoomEnabled(false);
                   }}
                   className={clsx(
                     "pointer-events-auto size-[44px] rounded-lg flex-center",
@@ -296,7 +295,6 @@ const PdfOverlay = ({
               <button
                 onClick={() => {
                   setCanDraw(true);
-                  setZoomEnabled(false);
                   setTouchType((prev) => {
                     const newTouchType = prev === "pen" ? "touch" : "pen";
                     localStorage.setItem("TOUCH_TYPE", newTouchType);
@@ -320,8 +318,7 @@ const PdfOverlay = ({
               </button>
               <button
                 onClick={() => {
-                  setCanDraw(zoomEnabled ? true : false);
-                  setZoomEnabled((prev) => !prev);
+                  setCanDraw((prev) => !prev);
                 }}
                 className={clsx(
                   "pointer-events-auto size-[44px] rounded-lg flex-center ml-[8px]",

@@ -8,10 +8,10 @@ import {
   createPDFFromImgBase64,
 } from "./libs/utils/common";
 import { reportErrorToNative } from "./libs/utils/errorReporter";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import {
-  documentSourceAtom,
-  fileAtom,
+  documentSessionAtom,
+  loadDocumentAtom,
   type DocumentSource,
 } from "./store/pdf";
 import { isTablet } from "react-device-detect";
@@ -29,8 +29,8 @@ function App() {
   const loadRequestIdRef = useRef(0);
   const loadStatusRef = useRef<FileLoadStatus>("waiting");
   const { changeLanguage, t } = useTranslation();
-  const setFile = useSetAtom(fileAtom);
-  const setDocumentSource = useSetAtom(documentSourceAtom);
+  const loadDocument = useSetAtom(loadDocumentAtom);
+  const documentSession = useAtomValue(documentSessionAtom);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -40,14 +40,16 @@ function App() {
       if (__DEV__ || !isTablet) {
         const { base64 } = await import("./libs/mock/base64");
         if (isDisposed) return;
-        setFile({
-          base64: base64,
-          bytes: null,
-          paths: "",
-          isNew: false,
-          type: "pdf",
+        loadDocument({
+          file: {
+            base64,
+            bytes: null,
+            paths: "",
+            isNew: false,
+            type: "pdf",
+          },
+          source: { kind: "base64", base64 },
         });
-        setDocumentSource({ kind: "base64", base64 });
         changeLanguage("ko");
         loadStatusRef.current = "loaded";
         setIsLoading(false);
@@ -101,14 +103,16 @@ function App() {
             return;
           }
 
-          setFile({
-            base64,
-            bytes: null,
-            paths: data.paths,
-            isNew: data.isNew,
-            type: data.type,
+          loadDocument({
+            file: {
+              base64,
+              bytes: null,
+              paths: data.paths,
+              isNew: data.isNew,
+              type: data.type,
+            },
+            source: documentSource,
           });
-          setDocumentSource(documentSource);
           changeLanguage(data.lang);
           loadStatusRef.current = "loaded";
           setIsLoading(false);
@@ -126,7 +130,7 @@ function App() {
       isDisposed = true;
       loadRequestIdRef.current += 1;
     };
-  }, [changeLanguage, setDocumentSource, setFile]);
+  }, [changeLanguage, loadDocument]);
 
   useEffect(() => {
     const interval = 3000;
@@ -156,7 +160,7 @@ function App() {
     return () => clearInterval(checkLoading);
   }, [isLoading, t]);
 
-  return <>{isLoading ? <Loading /> : <PdfEngine />}</>;
+  return <>{isLoading ? <Loading /> : <PdfEngine key={documentSession} />}</>;
 }
 
 export default App;

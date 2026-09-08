@@ -49,10 +49,13 @@ export const getDrawingPosition = (
   }
 
   const rect = canvas.getBoundingClientRect(); // 캔버스의 위치와 크기를 가져옴
-  const clientX = getClientPosition(e, devicePixelRatio, "x");
-  const clientY = getClientPosition(e, devicePixelRatio, "y");
-  const x = (clientX - devicePixelRatio * rect.left) / scale;
-  const y = (clientY - devicePixelRatio * rect.top) / scale;
+  const clientX = getClientPosition(e, 1, "x");
+  const clientY = getClientPosition(e, 1, "y");
+  // PDF 렌더러의 소수점 반올림과 확대 배율까지 실제 표시 크기로 보정한다.
+  const ratioX = rect.width > 0 ? canvas.width / rect.width : devicePixelRatio / scale;
+  const ratioY = rect.height > 0 ? canvas.height / rect.height : devicePixelRatio / scale;
+  const x = (clientX - rect.left) * ratioX;
+  const y = (clientY - rect.top) * ratioY;
 
   return { x, y };
 };
@@ -260,10 +263,10 @@ export const getModifiedPDFBase64 = async (
   for (let i = 0; i < pdfDoc.getPageCount(); i++) {
     const points = paths[i + 1];
     const page = pdfDoc.getPage(i);
-    const { width: pageWidth, height: pageHeight } = page.getSize();
+    const drawingTransform = getPDFDrawingTransform(page);
 
     forEachPathGroup(points, (group, style) => {
-      drawPDFPathGroup(page, group, style, pageWidth, pageHeight);
+      drawPDFPathGroup(page, group, style, drawingTransform);
     });
   }
 
@@ -282,50 +285,98 @@ export const getModifiedPDFBase64 = async (
   return base64DataUri;
 };
 
+// pdf.js는 MediaBox와 CropBox의 교집합을 회전해 화면에 보여 준다.
+// 저장된 좌표는 이 화면의 좌상단 기준이므로, PDF 사용자 공간으로 역변환한다.
+const getPDFDrawingTransform = (page: PDFPage) => {
+  const normalizeBox = (box: ReturnType<PDFPage["getMediaBox"]>) => {
+    const left = Math.min(box.x, box.x + box.width);
+    const bottom = Math.min(box.y, box.y + box.height);
+    const right = Math.max(box.x, box.x + box.width);
+    const top = Math.max(box.y, box.y + box.height);
+    return right > left && top > bottom ? { left, bottom, right, top } : null;
+  };
+  const mediaBox = normalizeBox(page.getMediaBox()) ?? {
+    left: 0,
+    bottom: 0,
+    right: 612,
+    top: 792,
+  };
+  const cropBox = normalizeBox(page.getCropBox()) ?? mediaBox;
+  const intersection = {
+    left: Math.max(mediaBox.left, cropBox.left),
+    bottom: Math.max(mediaBox.bottom, cropBox.bottom),
+    right: Math.min(mediaBox.right, cropBox.right),
+    top: Math.min(mediaBox.top, cropBox.top),
+  };
+  // 교집합이 없으면 pdf.js와 같이 MediaBox 전체를 사용한다.
+  const box =
+    intersection.right > intersection.left &&
+    intersection.top > intersection.bottom
+      ? intersection
+      : mediaBox;
+  const width = box.right - box.left;
+  const height = box.top - box.bottom;
+  const angle = page.getRotation().angle;
+  const rotation = angle % 90 === 0 ? ((angle % 360) + 360) % 360 : 0;
+
+  // 입력 x/y는 CSS 크기가 아닌 DRAWING_DPR배 캔버스를 기준으로 정규화되어 있다.
+  const w = width / DRAWING_DPR;
+  const h = height / DRAWING_DPR;
+  const transforms: Record<
+    number,
+    [number, number, number, number, number, number]
+  > = {
+    0: [w, 0, 0, -h, box.left, box.top],
+    90: [0, h, w, 0, box.left, box.bottom],
+    180: [-w, 0, 0, h, box.right, box.bottom],
+    270: [0, -h, -w, 0, box.right, box.top],
+  };
+  const [a, b, c, d, e, f] = transforms[rotation];
+
+  return {
+    point: ({ x, y }: { x: number; y: number }) => ({
+      x: a * x + c * y + e,
+      y: b * x + d * y + f,
+    }),
+    // UserUnit은 화면의 폭/높이와 선 두께에 동일하게 적용된다. 정규화된 비율을
+    // 원래 PDF 사용자 공간에 되돌릴 때 상쇄되므로 여기서 다시 곱하지 않는다.
+    lineWidthScale:
+      (rotation === 90 || rotation === 270 ? height : width) / DRAWING_DPR,
+  };
+};
+
 const drawPDFPathGroup = (
   page: PDFPage,
   group: PathsType[],
   style: { color: string; lineWidth: number; alpha: number },
-  pageWidth: number,
-  pageHeight: number
+  transform: ReturnType<typeof getPDFDrawingTransform>
 ) => {
-  // 필기 좌표는 DRAWING_DPR 배율 기준으로 정규화되어 있으므로, 기기의
-  // window.devicePixelRatio가 아니라 항상 같은 고정 배율로 되돌려야 한다.
-  const vertices = getPathGroupVertices(group);
+  const vertices = getPathGroupVertices(group).map(transform.point);
+  const lineWidth = style.lineWidth * transform.lineWidthScale;
 
   if (style.alpha !== 1) {
-    // 첫 점의 좌표로 시작 (y좌표는 pageHeight에서 빼서 뒤집기)
-    let pathData = `M ${(vertices[0].x * pageWidth) / DRAWING_DPR},${
-      (vertices[0].y * pageHeight) / DRAWING_DPR
-    }`;
+    // PDF 좌표로 변환한 뒤 SVG의 반대 Y축만 보정한다. 한 경로로 그려야
+    // 형광펜 선분끼리 겹치는 부분의 불투명도가 증가하지 않는다.
+    let pathData = `M ${vertices[0].x},${-vertices[0].y}`;
 
-    // 나머지 점들을 L 명령어로 연결
     for (let i = 1; i < vertices.length; i++) {
-      pathData += ` L ${(vertices[i].x * pageWidth) / DRAWING_DPR},${
-        (vertices[i].y * pageHeight) / DRAWING_DPR
-      }`;
+      pathData += ` L ${vertices[i].x},${-vertices[i].y}`;
     }
     page.drawSvgPath(pathData, {
       borderColor: colorToRGB(style.color as (typeof colorMap)[number]),
-      borderWidth: (style.lineWidth * pageWidth) / DRAWING_DPR,
+      borderWidth: lineWidth,
       borderOpacity: style.alpha,
       borderLineCap: LineCapStyle.Round,
       x: 0,
-      y: pageHeight,
+      y: 0,
     });
   } else {
     for (let i = 1; i < vertices.length; i++) {
       page.drawLine({
-        start: {
-          x: (vertices[i - 1].x * pageWidth) / DRAWING_DPR,
-          y: pageHeight - (vertices[i - 1].y * pageHeight) / DRAWING_DPR,
-        },
-        end: {
-          x: (vertices[i].x * pageWidth) / DRAWING_DPR,
-          y: pageHeight - (vertices[i].y * pageHeight) / DRAWING_DPR,
-        },
+        start: vertices[i - 1],
+        end: vertices[i],
         color: colorToRGB(style.color as (typeof colorMap)[number]),
-        thickness: (style.lineWidth * pageWidth) / DRAWING_DPR,
+        thickness: lineWidth,
         lineCap: style.alpha === 1 ? LineCapStyle.Round : LineCapStyle.Butt,
         opacity: style.alpha,
       });

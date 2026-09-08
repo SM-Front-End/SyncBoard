@@ -4,6 +4,7 @@ import {
   OnItemClickArgs,
   OnRenderSuccess,
   PathsType,
+  PageSize,
   PdfDocumentType,
 } from "./libs/types/common";
 import {
@@ -15,13 +16,17 @@ import {
 import useCanvas from "./hooks/useCanvas";
 import PdfOverlay from "./components/PdfOverlay";
 import ThumbnailOvelay from "./components/ThumbnailOvelay";
-import { getReducedPdfSize, removeAllPath } from "./libs/utils/common";
+import { removeAllPath } from "./libs/utils/common";
+import { PageSizes } from "pdf-lib";
+import { fitPageSize, getPageAtOffset, getPageOffsets, getPdfPageSizes } from "./libs/utils/pageLayout";
 import { reportErrorToNative } from "./libs/utils/errorReporter";
 import { usePdfTextSearch } from "./hooks/usePdfTextSearch";
 import { useWebviewInterface } from "./hooks/useWebviewInterface";
-import { useAtom, useAtomValue } from "jotai";
+import { useAtom, useAtomValue, useStore } from "jotai";
 import {
   documentSourceAtom,
+  documentSessionAtom,
+  documentReadyAtom,
   fileAtom,
   pdfConfigAtom,
   pdfStateAtom,
@@ -31,45 +36,41 @@ import { List, type ListImperativeAPI } from "react-window";
 import Row from "./components/Row";
 import { useWindowSize } from "./hooks/useWIndowSIze";
 import { useTranslation } from "./hooks/useTranslation";
+import { usePdfPan } from "./hooks/usePdfPan";
+import Loading from "./components/Loading";
 
 export default function PdfEngine() {
   const { t } = useTranslation();
+  const store = useStore();
+  const documentSession = useAtomValue(documentSessionAtom);
   const { width: windowWidth, height: windowHeight } = useWindowSize();
   const canvasRefs = useRef<HTMLCanvasElement[]>([]);
   const scaleRef = useRef<ReactZoomPanPinchContentRef>(null);
+  const [isZoomed, setIsZoomed] = useState(false);
   const [currentViewingPage, setCurrentViewingPage] = useState(1);
   const listRef = useRef<ListImperativeAPI>(null);
   const scrollRafRef = useRef<number | null>(null);
   const searchText = useAtomValue(searchTextAtom);
   const [file, setFile] = useAtom(fileAtom);
   const documentSource = useAtomValue(documentSourceAtom);
-  const documentSourceRef = useRef(documentSource);
-  documentSourceRef.current = documentSource;
   const [pdfState, setPdfState] = useAtom(pdfStateAtom);
   const [pdfConfig, setPdfConfig] = useAtom(pdfConfigAtom);
   const [initialLoading, setInitialLoading] = useState(true);
   const [pdfDocument, setPdfDocument] = useState<PdfDocumentType | null>(null);
+  const [originalPageSizes, setOriginalPageSizes] = useState<PageSize[]>([]);
   const isInitializedRef = useRef(false);
+  const loadIdRef = useRef(0);
 
-  const pdfSize = useMemo(() => {
-    const reducedSize = getReducedPdfSize(
-      pdfConfig.size.width,
-      pdfConfig.size.height,
-      windowWidth - 128,
-      windowHeight - 84,
-    );
-    // react-pdf는 캔버스 CSS 크기를 floor(viewport)로 잡는다(Page/Canvas.js).
-    // 같은 식으로 정수 크기를 만들어야 흰 배경/행 높이가 캔버스와 정확히 맞는다.
-    // 어긋나면 페이지 아래에 1px 미만의 흰 띠가 남는다.
-    const width = Math.floor(reducedSize.width);
-    if (pdfConfig.size.width <= 0) {
-      return { width, height: Math.floor(reducedSize.height) };
-    }
-    // 연산 순서까지 react-pdf와 동일하게 맞춘다(scale을 먼저 구하고 곱한다).
-    // 순서가 다르면 부동소수점 오차로 floor 결과가 1px 어긋날 수 있다.
-    const scale = width / pdfConfig.size.width;
-    return { width, height: Math.floor(pdfConfig.size.height * scale) };
-  }, [pdfConfig.size, windowWidth, windowHeight]);
+  const pageSizes = useMemo(
+    () => Array.from({ length: pdfState.totalPage }, (_, index) => fitPageSize(
+      originalPageSizes[index] ?? { width: PageSizes.A4[0], height: PageSizes.A4[1] },
+      windowWidth,
+      windowHeight,
+    )),
+    [originalPageSizes, pdfState.totalPage, windowWidth, windowHeight],
+  );
+  const pageOffsets = useMemo(() => getPageOffsets(pageSizes), [pageSizes]);
+  const rowHeight = useCallback((index: number) => pageSizes[index].height + 10, [pageSizes]);
 
   const {
     canDraw,
@@ -87,12 +88,19 @@ export default function PdfEngine() {
     draw,
     redrawPaths,
     stopDrawing,
+    cancelDrawing,
     setTouchType,
   } = useCanvas({
     canvasRefs,
     devicePixelRatio: pdfConfig.devicePixelRatio,
-    pageSize: { width: pdfSize.width, height: pdfSize.height },
+    pageSizes,
     strokeStep: pdfConfig.strokeStep,
+  });
+  const panHandlers = usePdfPan({
+    scaleRef,
+    canDraw,
+    width: windowWidth,
+    height: windowHeight,
   });
 
   const pdfFile = useMemo(
@@ -114,22 +122,18 @@ export default function PdfEngine() {
     }),
     [],
   );
-  const containerHeight = useMemo(
-    () => (pdfSize.height + 10) * pdfState.totalPage,
-    [pdfSize.height, pdfState.totalPage],
-  );
   const listStyle = useMemo(
     () =>
       pdfState.totalPage === 1
         ? {
             height: windowHeight,
-            top: Math.max((windowHeight - pdfSize.height) / 2, 0),
+            top: Math.max((windowHeight - pageSizes[0].height) / 2, 0),
           }
         : {},
-    [pdfSize.height, pdfState.totalPage, windowHeight],
+    [pageSizes, pdfState.totalPage, windowHeight],
   );
 
-  const { getSearchResult } = usePdfTextSearch(pdfDocument);
+  const { getSearchResult, prepareSearch } = usePdfTextSearch();
   useWebviewInterface({
     paths,
     getSearchResult,
@@ -152,30 +156,31 @@ export default function PdfEngine() {
 
   const onRenderSuccess: OnRenderSuccess = useCallback(
     (page) => {
-      if (canvasRefs.current) {
-        redrawPaths(page.width, page.height, page.pageNumber);
-      }
+      const size = pageSizes[page.pageNumber - 1];
+      if (size) redrawPaths(size.width, size.height, page.pageNumber);
     },
-    [redrawPaths],
+    [pageSizes, redrawPaths],
   );
 
   // 빈 페이지는 <Page>가 없어 onRenderSuccess가 오지 않으므로, 마운트 시점에
   // 직접 저장된 필기를 복원해 준다.
   const onBlankPageMount = useCallback(
     (pageNumber: number) => {
-      redrawPaths(pdfSize.width, pdfSize.height, pageNumber);
+      const size = pageSizes[pageNumber - 1];
+      if (size) redrawPaths(size.width, size.height, pageNumber);
     },
-    [pdfSize.height, pdfSize.width, redrawPaths],
+    [pageSizes, redrawPaths],
   );
 
   const itemData = useMemo(
     () => ({
-      pdfSize,
+      pageSizes,
       searchText,
       setRef,
       onPointerDown: startDrawing,
       onPointerMove: draw,
       onPointerUp: stopDrawing,
+      onPointerCancel: cancelDrawing,
       canDraw,
       onRenderSuccess,
       documentPageCount,
@@ -183,11 +188,12 @@ export default function PdfEngine() {
     }),
     [
       canDraw,
+      cancelDrawing,
       documentPageCount,
       draw,
       onBlankPageMount,
       onRenderSuccess,
-      pdfSize,
+      pageSizes,
       searchText,
       setRef,
       startDrawing,
@@ -206,11 +212,32 @@ export default function PdfEngine() {
     }
   }, [paths, t]);
 
-  const onZoomStop = useCallback(
+  const updateViewingPage = useCallback(
+    (scrollOffset: number, transform = scaleRef.current?.state) => {
+      const zoom = transform?.scale ?? 1;
+      const top = scrollOffset - (transform?.positionY ?? 0) / zoom;
+      const bottom = top + windowHeight / zoom;
+      const lastPage = pageOffsets.length - 1;
+      setCurrentViewingPage(
+        top > 0 && bottom >= pageOffsets[lastPage] - 5 / zoom
+          ? lastPage
+          : getPageAtOffset(pageOffsets, top + 5 / zoom),
+      );
+    },
+    [pageOffsets, windowHeight],
+  );
+
+  useEffect(() => {
+    updateViewingPage(listRef.current?.element?.scrollTop ?? 0);
+  }, [updateViewingPage]);
+
+  const onTransform = useCallback(
     (ref: ReactZoomPanPinchRef) => {
       scale.current = ref.state.scale;
+      setIsZoomed(ref.state.scale > 1);
+      updateViewingPage(listRef.current?.element?.scrollTop ?? 0, ref.state);
     },
-    [scale],
+    [scale, updateViewingPage],
   );
 
   const onThumbnailClick = useCallback(
@@ -235,26 +262,15 @@ export default function PdfEngine() {
       }
       scrollRafRef.current = requestAnimationFrame(() => {
         scrollRafRef.current = null;
-        const scrollPosition = scrollOffset + 5;
-        const scrollRatio = scrollPosition / containerHeight;
-        const currentPage = Math.min(
-          Math.floor(scrollRatio * pdfState.totalPage) + 1,
-          pdfState.totalPage,
-        );
-
-        const isNearBottom =
-          scrollPosition + windowHeight + 50 >= containerHeight;
-
-        // 값이 같으면 React가 리렌더를 생략하므로 currentViewingPage를 의존성에
-        // 넣지 않아도 된다 (넣으면 페이지가 바뀔 때마다 List가 새 핸들러를 받는다).
-        setCurrentViewingPage(isNearBottom ? pdfState.totalPage : currentPage);
+        updateViewingPage(scrollOffset);
       });
     },
-    [containerHeight, pdfState.totalPage, windowHeight],
+    [updateViewingPage],
   );
 
   useEffect(
     () => () => {
+      loadIdRef.current += 1;
       if (scrollRafRef.current !== null) {
         cancelAnimationFrame(scrollRafRef.current);
       }
@@ -264,21 +280,30 @@ export default function PdfEngine() {
 
   const onDocumentLoadSuccess = useCallback(
     async (pdf: PdfDocumentType) => {
+      if (isInitializedRef.current) return;
       const loadedSource = documentSource;
+      const loadId = ++loadIdRef.current;
+      const isCurrent = () =>
+        loadIdRef.current === loadId &&
+        store.get(documentSessionAtom) === documentSession &&
+        store.get(documentSourceAtom) === loadedSource;
 
       try {
+        const savedPaths: { [pageNumber: number]: PathsType[] } = file.paths ? JSON.parse(file.paths) : {};
+        const [sizes, bytes] = await Promise.all([
+          getPdfPageSizes(pdf),
+          loadedSource?.kind === "url" ? pdf.getData() : Promise.resolve(null),
+          prepareSearch(pdf).catch((error) => {
+            if (isCurrent()) reportErrorToNative("text-extract", error);
+          }),
+        ]);
+        if (!isCurrent()) return;
+        const { width, height } = sizes[0];
+
+        paths.current = savedPaths;
         setPdfDocument(pdf);
-
-        const page = await pdf.getPage(1);
-        const { width, height } = page.getViewport({ scale: 1 });
-
-        // URL은 react-pdf가 직접 읽는다. 로드가 끝난 뒤 같은 바이트를 받아 두면
-        // 저장/페이지 추가 시 다시 fetch하거나 Base64 원본을 요구하지 않아도 된다.
-        if (loadedSource?.kind === "url") {
-          const bytes = await pdf.getData();
-          if (documentSourceRef.current !== loadedSource) return;
-          setFile((prev) => ({ ...prev, bytes }));
-        }
+        setOriginalPageSizes(sizes);
+        if (bytes) setFile((prev) => ({ ...prev, bytes }));
 
         // floor하면 종횡비가 react-pdf가 쓰는 실제 viewport와 미세하게 어긋난다.
         // pdfSize 계산이 이 비율에 의존하므로 원본 값을 그대로 보관한다.
@@ -293,23 +318,16 @@ export default function PdfEngine() {
           ...prev,
           totalPage: pdf.numPages,
         }));
-        if (!isInitializedRef.current) {
-          isInitializedRef.current = true;
-          if (file.paths) {
-            const savedPaths: { [pageNumber: number]: PathsType[] } = JSON.parse(
-              file.paths,
-            );
-            paths.current = savedPaths;
-          }
-          setInitialLoading(false);
-        }
+        isInitializedRef.current = true;
+        store.set(documentReadyAtom, true);
+        setInitialLoading(false);
       } catch (error) {
-        if (documentSourceRef.current === loadedSource) {
+        if (isCurrent()) {
           reportErrorToNative("document", error, { fatal: true });
         }
       }
     },
-    [documentSource, file.paths, paths, setFile, setPdfConfig, setPdfState],
+    [documentSession, documentSource, file.paths, paths, prepareSearch, setFile, setPdfConfig, setPdfState, store],
   );
 
   const onDocumentError = useCallback((error: Error) => {
@@ -321,39 +339,44 @@ export default function PdfEngine() {
   return (
     <Document
       file={pdfFile}
-      loading={<></>}
+      loading={<Loading />}
       options={pdfOptions}
       onLoadSuccess={onDocumentLoadSuccess}
       onLoadError={onDocumentError}
       onSourceError={onDocumentError}
     >
-      {!initialLoading && (
+      {initialLoading ? <Loading /> : (
         <div className="bg-[#94A3B8] min-h-dvh flex-center">
           <TransformWrapper
             ref={scaleRef}
             initialScale={1}
             maxScale={3}
             disablePadding
+            autoAlignment={{ animationTime: 0 }}
             doubleClick={{ disabled: true }}
-            onZoomStop={onZoomStop}
+            onTransform={onTransform}
+            onPinchStart={() => cancelDrawing()}
             limitToBounds={true}
             panning={{
+              // usePdfPan에서 확대 이동과 페이지 스크롤을 함께 처리한다.
               disabled: true,
             }}
             centerZoomedOut
           >
             <TransformComponent>
               <List
+                {...panHandlers}
                 listRef={listRef}
                 onScroll={onScroll}
                 rowCount={pdfState.totalPage}
-                rowHeight={pdfSize.height + 10}
+                rowHeight={rowHeight}
                 rowProps={itemData}
                 rowComponent={Row}
                 className="overflow-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-300 hover:scrollbar-thumb-gray-500"
                 style={{
                   width: windowWidth,
                   height: windowHeight,
+                  touchAction: isZoomed && !canDraw ? "none" : "pan-x pan-y",
                   ...listStyle,
                 }}
               />
@@ -361,18 +384,19 @@ export default function PdfEngine() {
           </TransformWrapper>
         </div>
       )}
-      <ThumbnailOvelay
+      {!initialLoading && <ThumbnailOvelay
         paths={paths.current}
         currentViewingPage={currentViewingPage}
-        pdfSize={pdfSize}
+        pageSizes={pageSizes}
         documentPageCount={documentPageCount}
         onThumbnailClick={onThumbnailClick}
-      />
-      {!pdfState.isListOpen && (
+      />}
+      {!initialLoading && !pdfState.isListOpen && (
         <PdfOverlay
           paths={paths}
           color={color}
           drawType={drawType}
+          canDraw={canDraw}
           touchType={touchType}
           setTouchType={setTouchType}
           setCanDraw={setCanDraw}

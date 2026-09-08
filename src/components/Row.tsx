@@ -21,23 +21,25 @@ const Row = typedMemo(
   ({
     index,
     style,
-    pdfSize,
+    pageSizes,
     searchText,
     setRef,
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    onPointerCancel,
     canDraw,
     onRenderSuccess,
     documentPageCount,
     onBlankPageMount,
   }: RowComponentProps<{
-    pdfSize: { width: number; height: number };
+    pageSizes: { width: number; height: number }[];
     searchText: string;
     canDraw?: boolean;
     onPointerDown: (e: canvasEventType) => void;
     onPointerMove: (e: canvasEventType) => void;
     onPointerUp: (e: canvasEventType) => void;
+    onPointerCancel: (e: canvasEventType) => void;
     setRef: (node: HTMLCanvasElement) => (() => void) | void;
     onRenderSuccess: OnRenderSuccess;
     documentPageCount: number;
@@ -45,6 +47,7 @@ const Row = typedMemo(
   }>) => {
     const { t } = useTranslation();
     const pageNumber = index + 1;
+    const pdfSize = pageSizes[index];
     // newPage로 덧붙인 페이지. 원본 문서에는 없으므로 <Page> 없이 흰 배경만 그린다.
     const isBlankPage = documentPageCount > 0 && pageNumber > documentPageCount;
 
@@ -103,6 +106,8 @@ const Row = typedMemo(
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
+        onLostPointerCapture={onPointerCancel}
         data-index={pageNumber}
       />
     );

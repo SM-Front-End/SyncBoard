@@ -1,4 +1,5 @@
 import type { Languages } from "../../components/TranslationContext";
+import { colorMap } from "./common";
 
 const DOCUMENT_ORIGIN = "https://appassets.androidplatform.net";
 const DOCUMENT_PATH_PATTERN = /^\/doc\/[A-Za-z0-9_-]+(?:\.pdf)?$/;
@@ -36,6 +37,43 @@ const parsePaths = (value: unknown) => {
   if (value === undefined || value === null) return "";
   if (typeof value !== "string") {
     throw new Error("data.paths 형식이 올바르지 않습니다.");
+  }
+  if (value.trim() === "") return "";
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("data.paths JSON이 올바르지 않습니다.");
+  }
+  if (!isRecord(parsed)) {
+    throw new Error("data.paths는 페이지별 필기 목록이어야 합니다.");
+  }
+  for (const [pageNumber, paths] of Object.entries(parsed)) {
+    if (
+      !/^[1-9]\d*$/.test(pageNumber) ||
+      !Number.isSafeInteger(Number(pageNumber)) ||
+      !Array.isArray(paths)
+    ) {
+      throw new Error("data.paths 페이지 형식이 올바르지 않습니다.");
+    }
+    for (const path of paths) {
+      if (
+        !isRecord(path) ||
+        !["x", "y", "lastX", "lastY", "lineWidth", "alpha"].every(
+          (key) => typeof path[key] === "number" && Number.isFinite(path[key]),
+        ) ||
+        Number(path.lineWidth) < 0 ||
+        Number(path.alpha) < 0 ||
+        Number(path.alpha) > 1 ||
+        typeof path.drawOrder !== "string" ||
+        path.drawOrder.length === 0 ||
+        typeof path.color !== "string" ||
+        !colorMap.some((color) => color === path.color)
+      ) {
+        throw new Error("data.paths 필기 좌표 또는 스타일이 올바르지 않습니다.");
+      }
+    }
   }
   return value;
 };

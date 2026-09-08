@@ -4,8 +4,19 @@ import { Thumbnail } from "react-pdf";
 import { useAtom } from "jotai";
 import { pdfStateAtom } from "../store/pdf";
 import { OnItemClickArgs, PathsType } from "../libs/types/common";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { forEachPathGroup, reDrawPathGroup } from "../libs/utils/common";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefCallback,
+} from "react";
+import {
+  DRAWING_DPR,
+  forEachPathGroup,
+  reDrawPathGroup,
+} from "../libs/utils/common";
 import PlaceholderPage from "./PlaceholderPage";
 
 // 스크롤로 currentViewingPage가 바뀔 때 전체 썸네일 그리드가 리렌더되지 않도록
@@ -25,7 +36,7 @@ const ThumbnailItem = memo(
     thumbnailHeight: number;
     isActive: boolean;
     isBlankPage: boolean;
-    setRef: (node: HTMLCanvasElement) => void;
+    setRef: RefCallback<HTMLCanvasElement>;
     onThumbnailClick: (args: OnItemClickArgs) => void;
   }) => (
     <div className="w-[180px]">
@@ -44,7 +55,7 @@ const ThumbnailItem = memo(
           <Thumbnail
             pageNumber={pageNumber}
             width={180}
-            devicePixelRatio={2}
+            devicePixelRatio={DRAWING_DPR}
             onItemClick={onThumbnailClick}
             loading={
               <div style={{ width: 180, height: thumbnailHeight }}>
@@ -77,7 +88,7 @@ const ThumbnailItem = memo(
 const ThumbnailOvelay = ({
   paths,
   currentViewingPage,
-  pdfSize,
+  pageSizes,
   documentPageCount,
   onThumbnailClick,
 }: {
@@ -85,36 +96,26 @@ const ThumbnailOvelay = ({
     [pageNumber: number]: PathsType[];
   };
   currentViewingPage: number;
-  pdfSize: {
+  pageSizes: {
     width: number;
     height: number;
-  };
+  }[];
   documentPageCount: number;
   onThumbnailClick: (args: OnItemClickArgs) => void;
 }) => {
   const thumbnailCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
-  const [isOpenFirst, setIsOpenFirst] = useState(true);
+  const [hasOpened, setHasOpened] = useState(false);
   const [pdfState, setPdfState] = useAtom(pdfStateAtom);
-  const thumbnailHeight = useMemo(
-    () => (pdfSize.height / pdfSize.width) * 180,
-    [pdfSize]
-  );
-
-  const setRef = useCallback((node: HTMLCanvasElement) => {
-    if (node) {
-      const indexValue = Number(node.getAttribute("data-index"));
-      thumbnailCanvasRefs.current[indexValue] = node;
-    }
-  }, []);
 
   const redrawPaths = useCallback(
-    (pageNumber: number) => {
-      const canvas = thumbnailCanvasRefs.current[pageNumber];
-      if (!canvas) return;
+    (pageNumber: number, canvas = thumbnailCanvasRefs.current[pageNumber]) => {
+      const pageSize = pageSizes[pageNumber - 1];
+      if (!canvas || !pageSize || pageSize.width <= 0) return;
+      const thumbnailHeight = (pageSize.height / pageSize.width) * 180;
 
       // 전체 삭제 후 잔상이 남지 않도록, 필기가 없어도 항상 캔버스를 초기화
-      canvas.width = 180 * 2;
-      canvas.height = thumbnailHeight * 2;
+      canvas.width = 180 * DRAWING_DPR;
+      canvas.height = Math.round(thumbnailHeight * DRAWING_DPR);
 
       const points = paths[pageNumber];
       if (!points || points.length === 0) return;
@@ -125,23 +126,37 @@ const ThumbnailOvelay = ({
         reDrawPathGroup(context, group, style, 180, thumbnailHeight);
       });
     },
-    [thumbnailHeight, paths]
+    [pageSizes, paths]
+  );
+
+  const setRef = useCallback<RefCallback<HTMLCanvasElement>>(
+    (node) => {
+      if (!node) return;
+      const pageNumber = Number(node.dataset.index);
+      thumbnailCanvasRefs.current[pageNumber] = node;
+      // 첫 열기에도 캔버스가 연결된 시점에 복원한다. 페이지 크기 변경 시에도 재연결된다.
+      redrawPaths(pageNumber, node);
+      return () => {
+        if (thumbnailCanvasRefs.current[pageNumber] === node) {
+          thumbnailCanvasRefs.current[pageNumber] = null;
+        }
+      };
+    },
+    [redrawPaths],
   );
 
   // 목록이 열릴 때만 필기를 다시 그린다. currentViewingPage는 스크롤 중 계속
   // 바뀌므로 의존성에 넣으면 열려 있는 동안 전 페이지 썸네일을 반복해서 다시 그린다.
   useEffect(() => {
     if (!pdfState.isListOpen) return;
-    setIsOpenFirst(false);
-    Object.keys(paths)
-      .map(Number)
-      .forEach((pageNumber) => {
-        redrawPaths(pageNumber);
-      });
-  }, [paths, pdfState.isListOpen, redrawPaths]);
+    setHasOpened(true);
+    thumbnailCanvasRefs.current.forEach((canvas, pageNumber) => {
+      if (canvas) redrawPaths(pageNumber, canvas);
+    });
+  }, [pdfState.isListOpen, redrawPaths]);
 
   return (
-    !isOpenFirst && (
+    (pdfState.isListOpen || hasOpened) && (
       <div
         className={clsx(
           "fixed top-0 left-0 bottom-0 right-0 pb-[100px] bg-black/70 z-[9999]",
@@ -171,12 +186,12 @@ const ThumbnailOvelay = ({
               gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
             }}
           >
-            {Array.from({ length: pdfState.totalPage }, (_, index) => (
+            {pageSizes.map((pageSize, index) => (
               <ThumbnailItem
                 key={index}
                 pageNumber={index + 1}
                 totalPage={pdfState.totalPage}
-                thumbnailHeight={thumbnailHeight}
+                thumbnailHeight={(pageSize.height / pageSize.width) * 180}
                 isActive={currentViewingPage === index + 1}
                 isBlankPage={
                   documentPageCount > 0 && index + 1 > documentPageCount
