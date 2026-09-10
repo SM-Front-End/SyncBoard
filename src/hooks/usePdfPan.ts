@@ -6,9 +6,10 @@ interface Props {
   canDraw: boolean;
   width: number;
   height: number;
+  onScrollPositionChange: (offset: number) => void;
 }
 
-export function usePdfPan({ scaleRef, canDraw, width, height }: Props) {
+export function usePdfPan({ scaleRef, canDraw, width, height, onScrollPositionChange }: Props) {
   const pointers = useRef(new Map<number, { x: number; y: number }>());
 
   const onPointerDown = useCallback(
@@ -60,9 +61,10 @@ export function usePdfPan({ scaleRef, canDraw, width, height }: Props) {
       const remainingY = deltaY - (nextY - positionY);
       if (remainingY !== 0) {
         event.currentTarget.scrollTop -= remainingY / scale;
+        onScrollPositionChange(event.currentTarget.scrollTop);
       }
     },
-    [canDraw, height, scaleRef, width],
+    [canDraw, height, onScrollPositionChange, scaleRef, width],
   );
 
   const onPointerEnd = useCallback((event: PointerEvent<HTMLDivElement>) => {

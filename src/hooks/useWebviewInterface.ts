@@ -1,4 +1,4 @@
-import { RefObject, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { PathsType } from "../libs/types/common";
 import {
   getModifiedPDFBase64,
@@ -13,8 +13,6 @@ import {
   pdfStateAtom,
   searchTextAtom,
 } from "../store/pdf";
-import { ReactZoomPanPinchContentRef } from "react-zoom-pan-pinch";
-import { type ListImperativeAPI } from "react-window";
 import { useTranslation } from "./useTranslation";
 import { type SearchResult } from "./usePdfTextSearch";
 import { reportErrorToNative } from "../libs/utils/errorReporter";
@@ -24,15 +22,13 @@ export const MAX_PAGE = 5;
 interface UseWebviewInterfaceProps {
   paths: React.RefObject<{ [pageNumber: number]: PathsType[] }>;
   getSearchResult: (text: string) => SearchResult[];
-  scaleRef: RefObject<ReactZoomPanPinchContentRef | null>;
-  listRef: RefObject<ListImperativeAPI | null>;
+  scrollToPage: (index: number) => void;
 }
 
 export const useWebviewInterface = ({
   paths,
   getSearchResult,
-  scaleRef,
-  listRef,
+  scrollToPage,
 }: UseWebviewInterfaceProps) => {
   const { t } = useTranslation();
   const store = useStore();
@@ -170,8 +166,7 @@ export const useWebviewInterface = ({
           pageNumber < 1 ||
           pageNumber > store.get(pdfStateAtom).totalPage
         ) return;
-        scaleRef.current?.resetTransform(0);
-        listRef.current?.scrollToRow({ index: pageNumber - 1, align: "start" });
+        scrollToPage(pageNumber - 1);
       },
 
       endSearch: () => {
@@ -200,8 +195,7 @@ export const useWebviewInterface = ({
     setFile,
     setSearchText,
     getSearchResult,
-    scaleRef,
-    listRef,
+    scrollToPage,
     store,
     t,
   ]);

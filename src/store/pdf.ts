@@ -17,6 +17,7 @@ export const documentSourceAtom = atom<DocumentSource | null>(null);
 // 같은 파일을 다시 전달받아도 새 세션으로 취급해 이전 필기와 비동기 작업을 분리한다.
 export const documentSessionAtom = atom(0);
 export const documentReadyAtom = atom(false);
+export const currentViewingPageAtom = atom(1);
 export const searchTextAtom = atom("");
 export const pdfStateAtom = atom({
   isToolBarOpen: false,
@@ -44,6 +45,7 @@ export const loadDocumentAtom = atom(
     set(documentReadyAtom, false);
     set(fileAtom, document.file);
     set(documentSourceAtom, document.source);
+    set(currentViewingPageAtom, 1);
     set(searchTextAtom, "");
     set(pdfStateAtom, {
       ...pdfStateAtom.init,

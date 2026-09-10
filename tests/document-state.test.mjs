@@ -50,7 +50,6 @@ function createBridge({ ready = true } = {}) {
   const effects = [], refs = [], setters = new Map();
   let effectIndex = 0, refIndex = 0;
   const operations = [], saves = [], native = [], errors = [], rows = [], alerts = [];
-  let resets = 0;
   const paths = { current: { 1: [{ ...stroke }] } };
   const window = { AndroidInterface: {
     getPdfData: (value) => native.push(["page", value]),
@@ -87,16 +86,14 @@ function createBridge({ ready = true } = {}) {
     "./useTranslation": { useTranslation: () => ({ t: (key) => key }) },
     "../libs/utils/errorReporter": { reportErrorToNative: (scope, error) => errors.push([scope, error.message]) },
   }, { window, alert: (message) => alerts.push(message) });
-  const scaleRef = { current: { resetTransform: () => resets++ } };
-  const listRef = { current: { scrollToRow: ({ index }) => rows.push(index) } };
+  const scrollToPage = (index) => rows.push(index);
   const render = (getSearchResult = () => []) => {
     effectIndex = 0;
     refIndex = 0;
-    invokeBridge({ paths, getSearchResult, scaleRef, listRef });
+    invokeBridge({ paths, getSearchResult, scrollToPage });
   };
   render();
   return { store, window, paths, operations, saves, native, errors, rows, alerts, render,
-    get resets() { return resets; },
     unmount: () => effects.forEach((effect) => effect.cleanup?.()),
   };
 }
@@ -106,6 +103,7 @@ test("document replacement clears document state and increments the session toge
   store.set(atoms.loadDocumentAtom, documentInput("A"));
   store.set(atoms.documentReadyAtom, true);
   store.set(atoms.searchTextAtom, "old search");
+  store.set(atoms.currentViewingPageAtom, 5);
   store.set(atoms.pdfStateAtom, { ...store.get(atoms.pdfStateAtom), totalPage: 5, isListOpen: true, isFullScreen: true });
   store.set(atoms.pdfConfigAtom, { ...store.get(atoms.pdfConfigAtom), size: { width: 400, height: 500 }, strokeStep: 8 });
   const notifications = [];
@@ -114,9 +112,10 @@ test("document replacement clears document state and increments the session toge
     source: store.get(atoms.documentSourceAtom).base64,
     ready: store.get(atoms.documentReadyAtom),
     search: store.get(atoms.searchTextAtom),
+    viewingPage: store.get(atoms.currentViewingPageAtom),
   }));
   store.set(atoms.loadDocumentAtom, documentInput("B"));
-  assert.deepEqual(notifications, [{ session: 2, source: "B", ready: false, search: "" }]);
+  assert.deepEqual(notifications, [{ session: 2, source: "B", ready: false, search: "", viewingPage: 1 }]);
   assert.equal(store.get(atoms.fileAtom).base64, "B");
   assert.equal(store.get(atoms.pdfStateAtom).totalPage, 1);
   assert.equal(store.get(atoms.pdfStateAtom).isListOpen, false);
@@ -124,6 +123,23 @@ test("document replacement clears document state and increments the session toge
   assert.equal(store.get(atoms.pdfConfigAtom).size.width, 0);
   assert.equal(store.get(atoms.pdfConfigAtom).strokeStep, 8);
   unsubscribe();
+});
+
+test("page indicator updates do not notify document or viewport state subscribers", () => {
+  const store = createStore();
+  const pageNotifications = [], viewerNotifications = [];
+  const cleanups = [
+    store.sub(atoms.currentViewingPageAtom, () => pageNotifications.push(store.get(atoms.currentViewingPageAtom))),
+    ...[atoms.pdfStateAtom, atoms.pdfConfigAtom, atoms.documentSourceAtom].map((atom) =>
+      store.sub(atom, () => viewerNotifications.push(atom)),
+    ),
+  ];
+  store.set(atoms.currentViewingPageAtom, 2);
+  store.set(atoms.currentViewingPageAtom, 2);
+  store.set(atoms.currentViewingPageAtom, 3);
+  assert.deepEqual(pageNotifications, [2, 3]);
+  assert.deepEqual(viewerNotifications, []);
+  cleanups.forEach((cleanup) => cleanup());
 });
 
 test("saved paths reject malformed JSON and unusable page/stroke shapes", () => {
@@ -222,10 +238,8 @@ test("invalid native page numbers never reach the virtual list", () => {
     bridge.window.getPageNumber(value);
   }
   assert.deepEqual(bridge.rows, []);
-  assert.equal(bridge.resets, 0);
   bridge.window.getPageNumber("2");
   assert.deepEqual(bridge.rows, [1]);
-  assert.equal(bridge.resets, 1);
   bridge.unmount();
 });
 

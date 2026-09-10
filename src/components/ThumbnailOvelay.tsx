@@ -1,8 +1,8 @@
 import clsx from "clsx";
 import { Close } from "../assets/icons";
 import { Thumbnail } from "react-pdf";
-import { useAtom } from "jotai";
-import { pdfStateAtom } from "../store/pdf";
+import { atom, useAtom, useAtomValue } from "jotai";
+import { currentViewingPageAtom, pdfStateAtom } from "../store/pdf";
 import { OnItemClickArgs, PathsType } from "../libs/types/common";
 import {
   memo,
@@ -18,6 +18,11 @@ import {
   reDrawPathGroup,
 } from "../libs/utils/common";
 import PlaceholderPage from "./PlaceholderPage";
+
+// 닫힌 목록은 페이지 번호를 구독하지 않고, 다시 열 때 최신 번호를 읽는다.
+const visibleCurrentPageAtom = atom((get) =>
+  get(pdfStateAtom).isListOpen ? get(currentViewingPageAtom) : 0,
+);
 
 // 스크롤로 currentViewingPage가 바뀔 때 전체 썸네일 그리드가 리렌더되지 않도록
 // 아이템을 분리해 memo한다. 실제로 바뀌는 건 이전/현재 두 개뿐이다.
@@ -87,7 +92,6 @@ const ThumbnailItem = memo(
 
 const ThumbnailOvelay = ({
   paths,
-  currentViewingPage,
   pageSizes,
   documentPageCount,
   onThumbnailClick,
@@ -95,7 +99,6 @@ const ThumbnailOvelay = ({
   paths: {
     [pageNumber: number]: PathsType[];
   };
-  currentViewingPage: number;
   pageSizes: {
     width: number;
     height: number;
@@ -106,6 +109,7 @@ const ThumbnailOvelay = ({
   const thumbnailCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const [hasOpened, setHasOpened] = useState(false);
   const [pdfState, setPdfState] = useAtom(pdfStateAtom);
+  const currentViewingPage = useAtomValue(visibleCurrentPageAtom);
 
   const redrawPaths = useCallback(
     (pageNumber: number, canvas = thumbnailCanvasRefs.current[pageNumber]) => {
@@ -207,4 +211,4 @@ const ThumbnailOvelay = ({
   );
 };
 
-export default ThumbnailOvelay;
+export default memo(ThumbnailOvelay);

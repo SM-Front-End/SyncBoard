@@ -28,8 +28,8 @@ import {
 } from "../libs/utils/common";
 import { DrawType, PathsType, TouchType } from "../libs/types/common";
 import ColorPicker from "./ColorPicker";
-import { useAtom } from "jotai";
-import { fileAtom, pdfConfigAtom, pdfStateAtom } from "../store/pdf";
+import { useAtom, useAtomValue } from "jotai";
+import { currentViewingPageAtom, fileAtom, pdfConfigAtom, pdfStateAtom } from "../store/pdf";
 import { useTranslation } from "../hooks/useTranslation";
 import { MAX_PAGE } from "../hooks/useWebviewInterface";
 
@@ -44,7 +44,6 @@ interface Props {
   setDrawType: Dispatch<SetStateAction<DrawType>>;
   setColor: Dispatch<SetStateAction<(typeof colorMap)[number]>>;
   onEraseAllClick: () => void;
-  currentViewingPage: number;
   isWrongTouch: boolean;
   setIsWrongTouch: Dispatch<SetStateAction<boolean>>;
 }
@@ -57,6 +56,11 @@ const STROKE_STEPS = [
   { step: 4, Icon: Stroke1Step },
 ];
 
+function PageIndicator({ totalPage }: { totalPage: number }) {
+  const currentViewingPage = useAtomValue(currentViewingPageAtom);
+  return <span className="text-white text-lg">{`${currentViewingPage}/${totalPage}`}</span>;
+}
+
 const PdfOverlay = ({
   paths,
   canDraw,
@@ -68,7 +72,6 @@ const PdfOverlay = ({
   setDrawType,
   setColor,
   onEraseAllClick,
-  currentViewingPage,
   isWrongTouch,
   setIsWrongTouch,
 }: Props) => {
@@ -93,7 +96,7 @@ const PdfOverlay = ({
           <div className="size-[36px] bg-white rounded-lg flex-center">
             <ThumbnailList />
           </div>
-          <span className="text-white text-lg">{`${currentViewingPage}/${pdfState.totalPage}`}</span>
+          <PageIndicator totalPage={pdfState.totalPage} />
         </button>
         <button
           onClick={() => {

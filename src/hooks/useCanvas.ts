@@ -46,6 +46,7 @@ export default function useCanvas({
     type: string;
     canvas: HTMLCanvasElement;
     pageSize: PageSize;
+    hasDrawn: boolean;
   } | null>(null);
   const erasePathsRef = useRef<PathsType[]>([]);
   const paths = useRef<{ [pageNumber: number]: PathsType[] }>({});
@@ -70,6 +71,8 @@ export default function useCanvas({
   const startDrawing = useCallback(
     (e: canvasEventType) => {
       if (!canDraw || activePointer.current) return;
+      // 핀치로 획을 취소한 뒤에도 추가 손가락이 새 필기를 시작하지 않게 한다.
+      if (e.pointerType === "touch" && e.isPrimary === false) return;
       if (e.pointerType !== touchType) {
         setIsWrongTouch(true);
         return;
@@ -94,6 +97,7 @@ export default function useCanvas({
         type: e.pointerType,
         canvas,
         pageSize: { ...pageSize },
+        hasDrawn: false,
       };
       drawOrder.current = uuidv4();
       prevPosRef.current = { x, y };
@@ -147,6 +151,7 @@ export default function useCanvas({
           scale.current
         );
 
+        pointer.hasDrawn = true;
         if (drawType === "eraser") {
           drawDashedLine(
             context,
@@ -218,7 +223,7 @@ export default function useCanvas({
     [isActivePointer, throttledDraw],
   );
 
-  const finishDrawing = useCallback((flushPending: boolean) => {
+  const finishDrawing = useCallback((flushPending: boolean, discardStroke = false) => {
     const pointer = activePointer.current;
     if (!pointer) return;
     if (flushPending) throttledDraw.flush();
@@ -228,7 +233,19 @@ export default function useCanvas({
     const canvas = pointer.canvas;
     const pageSize = pointer.pageSize;
     const context = canvas.getContext("2d")!;
-    if (drawType === "eraser") {
+    if (discardStroke && pointer.hasDrawn) {
+      // 두 번째 손가락이 닿기 전 첫 손가락의 move가 점/짧은 획을 남길 수 있다.
+      // 핀치로 전환하면 현재 획만 되돌리고, 지우개 경로도 적용하지 않는다.
+      const pagePaths = paths.current[currentPage.current];
+      if (pagePaths && drawType !== "eraser") {
+        paths.current[currentPage.current] = pagePaths.filter(
+          (path) => path.drawOrder !== drawOrder.current,
+        );
+      }
+      // 마지막 획을 제거한 경우 redrawPaths가 바로 반환해도 점은 남기지 않는다.
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      redrawPaths(pageSize.width, pageSize.height, currentPage.current);
+    } else if (!discardStroke && drawType === "eraser") {
       const currentPaths = paths.current[currentPage.current] || [];
       const erasePaths = erasePathsRef.current;
 
@@ -298,6 +315,11 @@ export default function useCanvas({
     [finishDrawing, isActivePointer],
   );
 
+  const cancelDrawingForPinch = useCallback(() => {
+    // 펜으로 쓴 획은 손가락의 핀치 때문에 되돌리지 않는다.
+    finishDrawing(false, activePointer.current?.type === "touch");
+  }, [finishDrawing]);
+
   useEffect(() => {
     const onBlur = () => finishDrawing(false);
     window.addEventListener("blur", onBlur);
@@ -326,6 +348,7 @@ export default function useCanvas({
     redrawPaths,
     stopDrawing,
     cancelDrawing,
+    cancelDrawingForPinch,
     setTouchType,
   };
 }

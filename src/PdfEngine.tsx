@@ -18,7 +18,11 @@ import PdfOverlay from "./components/PdfOverlay";
 import ThumbnailOvelay from "./components/ThumbnailOvelay";
 import { removeAllPath } from "./libs/utils/common";
 import { PageSizes } from "pdf-lib";
-import { fitPageSize, getPageAtOffset, getPageOffsets, getPdfPageSizes } from "./libs/utils/pageLayout";
+import {
+  fitPageSize,
+  getPageOffsets,
+  getPdfPageSizes,
+} from "./libs/utils/pageLayout";
 import { reportErrorToNative } from "./libs/utils/errorReporter";
 import { usePdfTextSearch } from "./hooks/usePdfTextSearch";
 import { useWebviewInterface } from "./hooks/useWebviewInterface";
@@ -37,6 +41,8 @@ import Row from "./components/Row";
 import { useWindowSize } from "./hooks/useWIndowSIze";
 import { useTranslation } from "./hooks/useTranslation";
 import { usePdfPan } from "./hooks/usePdfPan";
+import { usePdfViewingPage } from "./hooks/usePdfViewingPage";
+import { usePdfTouchAction } from "./hooks/usePdfTouchAction";
 import Loading from "./components/Loading";
 
 export default function PdfEngine() {
@@ -46,10 +52,7 @@ export default function PdfEngine() {
   const { width: windowWidth, height: windowHeight } = useWindowSize();
   const canvasRefs = useRef<HTMLCanvasElement[]>([]);
   const scaleRef = useRef<ReactZoomPanPinchContentRef>(null);
-  const [isZoomed, setIsZoomed] = useState(false);
-  const [currentViewingPage, setCurrentViewingPage] = useState(1);
   const listRef = useRef<ListImperativeAPI>(null);
-  const viewingPageRafRef = useRef<number | null>(null);
   const searchText = useAtomValue(searchTextAtom);
   const [file, setFile] = useAtom(fileAtom);
   const documentSource = useAtomValue(documentSourceAtom);
@@ -62,15 +65,37 @@ export default function PdfEngine() {
   const loadIdRef = useRef(0);
 
   const pageSizes = useMemo(
-    () => Array.from({ length: pdfState.totalPage }, (_, index) => fitPageSize(
-      originalPageSizes[index] ?? { width: PageSizes.A4[0], height: PageSizes.A4[1] },
-      windowWidth,
-      windowHeight,
-    )),
+    () =>
+      Array.from({ length: pdfState.totalPage }, (_, index) =>
+        fitPageSize(
+          originalPageSizes[index] ?? {
+            width: PageSizes.A4[0],
+            height: PageSizes.A4[1],
+          },
+          windowWidth,
+          windowHeight,
+        ),
+      ),
     [originalPageSizes, pdfState.totalPage, windowWidth, windowHeight],
   );
   const pageOffsets = useMemo(() => getPageOffsets(pageSizes), [pageSizes]);
-  const rowHeight = useCallback((index: number) => pageSizes[index].height + 10, [pageSizes]);
+  const rowHeight = useCallback(
+    (index: number) => pageSizes[index].height + 10,
+    [pageSizes],
+  );
+
+  const {
+    scheduleUpdate: scheduleViewingPageUpdate,
+    recordScrollOffset,
+    syncScrollPosition,
+    onScroll,
+    scrollToPage,
+  } = usePdfViewingPage({
+    listRef,
+    scaleRef,
+    pageOffsets,
+    viewportHeight: windowHeight,
+  });
 
   const {
     canDraw,
@@ -89,6 +114,7 @@ export default function PdfEngine() {
     redrawPaths,
     stopDrawing,
     cancelDrawing,
+    cancelDrawingForPinch,
     setTouchType,
   } = useCanvas({
     canvasRefs,
@@ -101,17 +127,15 @@ export default function PdfEngine() {
     canDraw,
     width: windowWidth,
     height: windowHeight,
+    onScrollPositionChange: recordScrollOffset,
   });
 
-  const pdfFile = useMemo(
-    () => {
-      if (!documentSource) return null;
-      return documentSource.kind === "url"
-        ? documentSource.url
-        : `data:application/pdf;base64,${documentSource.base64}`;
-    },
-    [documentSource],
-  );
+  const pdfFile = useMemo(() => {
+    if (!documentSource) return null;
+    return documentSource.kind === "url"
+      ? documentSource.url
+      : `data:application/pdf;base64,${documentSource.base64}`;
+  }, [documentSource]);
   // 원본 문서가 실제로 담고 있는 페이지 수. 이보다 뒤 번호는 newPage로 덧붙인
   // 빈 페이지이며, 원본을 다시 파싱하지 않기 위해 로컬에서 빈 화면으로 그린다.
   const documentPageCount = pdfDocument?.numPages ?? 0;
@@ -137,8 +161,7 @@ export default function PdfEngine() {
   useWebviewInterface({
     paths,
     getSearchResult,
-    scaleRef,
-    listRef,
+    scrollToPage,
   });
 
   const setRef = useCallback((node: HTMLCanvasElement) => {
@@ -212,48 +235,24 @@ export default function PdfEngine() {
     }
   }, [paths, t]);
 
-  const updateViewingPage = useCallback(
-    (scrollOffset: number, transform = scaleRef.current?.state) => {
-      const zoom = transform?.scale ?? 1;
-      const top = scrollOffset - (transform?.positionY ?? 0) / zoom;
-      const bottom = top + windowHeight / zoom;
-      const lastPage = pageOffsets.length - 1;
-      setCurrentViewingPage(
-        top > 0 && bottom >= pageOffsets[lastPage] - 5 / zoom
-          ? lastPage
-          : getPageAtOffset(pageOffsets, top + 5 / zoom),
-      );
+  const { syncTouchAction, setElement, onTouchStartCapture } = usePdfTouchAction({ scale, canDraw });
+
+  const setListRef = useCallback(
+    (instance: ListImperativeAPI | null) => {
+      listRef.current = instance;
+      setElement(instance?.element ?? null);
+      syncScrollPosition();
     },
-    [pageOffsets, windowHeight],
+    [setElement, syncScrollPosition],
   );
-
-  useEffect(() => {
-    updateViewingPage(listRef.current?.element?.scrollTop ?? 0);
-    return () => {
-      if (viewingPageRafRef.current !== null) {
-        cancelAnimationFrame(viewingPageRafRef.current);
-        viewingPageRafRef.current = null;
-      }
-    };
-  }, [updateViewingPage]);
-
-  const scheduleViewingPageUpdate = useCallback(() => {
-    if (viewingPageRafRef.current !== null) return;
-    // 줌과 스크롤이 같은 프레임에 발생해도 페이지 번호는 한 번만 계산한다.
-    // 실행 시점의 위치를 읽어 경계 스크롤과 페이지 이동의 마지막 상태를 반영한다.
-    viewingPageRafRef.current = requestAnimationFrame(() => {
-      viewingPageRafRef.current = null;
-      updateViewingPage(listRef.current?.element?.scrollTop ?? 0);
-    });
-  }, [updateViewingPage]);
 
   const onTransform = useCallback(
     (ref: ReactZoomPanPinchRef) => {
       scale.current = ref.state.scale;
-      setIsZoomed(ref.state.scale > 1);
+      syncTouchAction();
       scheduleViewingPageUpdate();
     },
-    [scale, scheduleViewingPageUpdate],
+    [scale, scheduleViewingPageUpdate, syncTouchAction],
   );
 
   const onThumbnailClick = useCallback(
@@ -262,10 +261,9 @@ export default function PdfEngine() {
         ...prev,
         isListOpen: false,
       }));
-      scaleRef.current?.resetTransform(0);
-      listRef.current?.scrollToRow({ index: args.pageIndex, align: "start" });
+      scrollToPage(args.pageIndex);
     },
-    [setPdfState],
+    [scrollToPage, setPdfState],
   );
 
   useEffect(
@@ -286,7 +284,9 @@ export default function PdfEngine() {
         store.get(documentSourceAtom) === loadedSource;
 
       try {
-        const savedPaths: { [pageNumber: number]: PathsType[] } = file.paths ? JSON.parse(file.paths) : {};
+        const savedPaths: { [pageNumber: number]: PathsType[] } = file.paths
+          ? JSON.parse(file.paths)
+          : {};
         const [sizes, bytes] = await Promise.all([
           getPdfPageSizes(pdf),
           loadedSource?.kind === "url" ? pdf.getData() : Promise.resolve(null),
@@ -324,7 +324,17 @@ export default function PdfEngine() {
         }
       }
     },
-    [documentSession, documentSource, file.paths, paths, prepareSearch, setFile, setPdfConfig, setPdfState, store],
+    [
+      documentSession,
+      documentSource,
+      file.paths,
+      paths,
+      prepareSearch,
+      setFile,
+      setPdfConfig,
+      setPdfState,
+      store,
+    ],
   );
 
   const onDocumentError = useCallback((error: Error) => {
@@ -342,7 +352,9 @@ export default function PdfEngine() {
       onLoadError={onDocumentError}
       onSourceError={onDocumentError}
     >
-      {initialLoading ? <Loading /> : (
+      {initialLoading ? (
+        <Loading />
+      ) : (
         <div className="bg-[#94A3B8] min-h-dvh flex-center">
           <TransformWrapper
             ref={scaleRef}
@@ -352,7 +364,7 @@ export default function PdfEngine() {
             autoAlignment={{ animationTime: 0 }}
             doubleClick={{ disabled: true }}
             onTransform={onTransform}
-            onPinchStart={() => cancelDrawing()}
+            onPinchStart={cancelDrawingForPinch}
             limitToBounds={true}
             panning={{
               // usePdfPan에서 확대 이동과 페이지 스크롤을 함께 처리한다.
@@ -363,8 +375,10 @@ export default function PdfEngine() {
             <TransformComponent contentStyle={{ willChange: "transform" }}>
               <List
                 {...panHandlers}
-                listRef={listRef}
-                onScroll={scheduleViewingPageUpdate}
+                onTouchStartCapture={onTouchStartCapture}
+                listRef={setListRef}
+                onScroll={onScroll}
+                onResize={syncScrollPosition}
                 rowCount={pdfState.totalPage}
                 rowHeight={rowHeight}
                 overscanCount={2}
@@ -374,7 +388,6 @@ export default function PdfEngine() {
                 style={{
                   width: windowWidth,
                   height: windowHeight,
-                  touchAction: isZoomed && !canDraw ? "none" : "pan-x pan-y",
                   ...listStyle,
                 }}
               />
@@ -382,13 +395,14 @@ export default function PdfEngine() {
           </TransformWrapper>
         </div>
       )}
-      {!initialLoading && <ThumbnailOvelay
-        paths={paths.current}
-        currentViewingPage={currentViewingPage}
-        pageSizes={pageSizes}
-        documentPageCount={documentPageCount}
-        onThumbnailClick={onThumbnailClick}
-      />}
+      {!initialLoading && (
+        <ThumbnailOvelay
+          paths={paths.current}
+          pageSizes={pageSizes}
+          documentPageCount={documentPageCount}
+          onThumbnailClick={onThumbnailClick}
+        />
+      )}
       {!initialLoading && !pdfState.isListOpen && (
         <PdfOverlay
           paths={paths}
@@ -401,7 +415,6 @@ export default function PdfEngine() {
           setColor={setColor}
           setDrawType={setDrawType}
           onEraseAllClick={onEraseAllClick}
-          currentViewingPage={currentViewingPage}
           isWrongTouch={isWrongTouch}
           setIsWrongTouch={setIsWrongTouch}
         />
