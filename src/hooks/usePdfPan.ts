@@ -51,7 +51,9 @@ export function usePdfPan({ scaleRef, canDraw, width, height }: Props) {
       const nextX = Math.max(width * (1 - scale), Math.min(0, positionX + deltaX));
       const nextY = Math.max(height * (1 - scale), Math.min(0, positionY + deltaY));
 
-      transform.setTransform(nextX, nextY, scale, 0);
+      if (nextX !== positionX || nextY !== positionY) {
+        transform.setTransform(nextX, nextY, scale, 0);
+      }
 
       // 확대된 뷰포트의 끝에 도달하면 남은 이동량으로 가상 목록을 스크롤한다.
       // 매 이벤트의 이동량을 사용해야 경계에서 방향을 바꿔도 즉시 움직인다.

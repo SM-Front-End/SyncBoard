@@ -49,7 +49,7 @@ export default function PdfEngine() {
   const [isZoomed, setIsZoomed] = useState(false);
   const [currentViewingPage, setCurrentViewingPage] = useState(1);
   const listRef = useRef<ListImperativeAPI>(null);
-  const scrollRafRef = useRef<number | null>(null);
+  const viewingPageRafRef = useRef<number | null>(null);
   const searchText = useAtomValue(searchTextAtom);
   const [file, setFile] = useAtom(fileAtom);
   const documentSource = useAtomValue(documentSourceAtom);
@@ -229,15 +229,31 @@ export default function PdfEngine() {
 
   useEffect(() => {
     updateViewingPage(listRef.current?.element?.scrollTop ?? 0);
+    return () => {
+      if (viewingPageRafRef.current !== null) {
+        cancelAnimationFrame(viewingPageRafRef.current);
+        viewingPageRafRef.current = null;
+      }
+    };
+  }, [updateViewingPage]);
+
+  const scheduleViewingPageUpdate = useCallback(() => {
+    if (viewingPageRafRef.current !== null) return;
+    // 줌과 스크롤이 같은 프레임에 발생해도 페이지 번호는 한 번만 계산한다.
+    // 실행 시점의 위치를 읽어 경계 스크롤과 페이지 이동의 마지막 상태를 반영한다.
+    viewingPageRafRef.current = requestAnimationFrame(() => {
+      viewingPageRafRef.current = null;
+      updateViewingPage(listRef.current?.element?.scrollTop ?? 0);
+    });
   }, [updateViewingPage]);
 
   const onTransform = useCallback(
     (ref: ReactZoomPanPinchRef) => {
       scale.current = ref.state.scale;
       setIsZoomed(ref.state.scale > 1);
-      updateViewingPage(listRef.current?.element?.scrollTop ?? 0, ref.state);
+      scheduleViewingPageUpdate();
     },
-    [scale, updateViewingPage],
+    [scale, scheduleViewingPageUpdate],
   );
 
   const onThumbnailClick = useCallback(
@@ -252,28 +268,9 @@ export default function PdfEngine() {
     [setPdfState],
   );
 
-  const onScroll = useCallback(
-    (e: React.UIEvent<HTMLDivElement>) => {
-      const scrollOffset = e.currentTarget.scrollTop;
-      // 스크롤 이벤트마다 rAF를 새로 예약하면 한 프레임에 콜백이 수십 개 쌓인다.
-      // 직전 예약을 취소해 프레임당 한 번만 계산한다.
-      if (scrollRafRef.current !== null) {
-        cancelAnimationFrame(scrollRafRef.current);
-      }
-      scrollRafRef.current = requestAnimationFrame(() => {
-        scrollRafRef.current = null;
-        updateViewingPage(scrollOffset);
-      });
-    },
-    [updateViewingPage],
-  );
-
   useEffect(
     () => () => {
       loadIdRef.current += 1;
-      if (scrollRafRef.current !== null) {
-        cancelAnimationFrame(scrollRafRef.current);
-      }
     },
     [],
   );
@@ -363,13 +360,14 @@ export default function PdfEngine() {
             }}
             centerZoomedOut
           >
-            <TransformComponent>
+            <TransformComponent contentStyle={{ willChange: "transform" }}>
               <List
                 {...panHandlers}
                 listRef={listRef}
-                onScroll={onScroll}
+                onScroll={scheduleViewingPageUpdate}
                 rowCount={pdfState.totalPage}
                 rowHeight={rowHeight}
+                overscanCount={2}
                 rowProps={itemData}
                 rowComponent={Row}
                 className="overflow-auto scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-gray-300 hover:scrollbar-thumb-gray-500"
